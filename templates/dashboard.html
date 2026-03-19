@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block title %}EconomIA — Dashboard{% endblock %}
+{% block body %}
+<section class="hero">
+  <div>
+    <div class="pill">Dashboard mensal</div>
+    <h1>Visão do mês atual.</h1>
+    <p>Resumo de gastos, distribuição por categoria e comparação com o orçamento.</p>
+  </div>
+  <nav>
+    <a href="/">Chat</a>
+    <a href="/dashboard">Dashboard</a>
+    <form method="post" action="/logout"><button type="submit">Sair</button></form>
+  </nav>
+</section>
+<section class="card">
+  <div class="kpi">
+    <div class="metric"><span class="muted">Total gasto</span><strong>{{ summary.total_brl }}</strong></div>
+    <div class="metric"><span class="muted">Lançamentos</span><strong>{{ summary.expense_count }}</strong></div>
+    <div class="metric">
+      <span class="muted">Ticket médio</span>
+      <strong>
+        {% if summary.expense_count %}
+          {{ cents_to_brl((summary.total_cents / summary.expense_count) | int) }}
+        {% else %}
+          R$ 0,00
+        {% endif %}
+      </strong>
+    </div>
+  </div>
+  <h3>Últimos gastos</h3>
+  <table>
+    <thead><tr><th>Data</th><th>Descrição</th><th>Categoria</th><th>Valor</th></tr></thead>
+    <tbody>
+      {% if summary.recent_expenses %}
+        {% for item in summary.recent_expenses %}
+          <tr>
+            <td>{{ item.expense_date }}</td>
+            <td>{{ item.description }}</td>
+            <td>{{ item.category_label }}</td>
+            <td>{{ cents_to_brl(item.amount_cents) }}</td>
+          </tr>
+        {% endfor %}
+      {% else %}
+        <tr><td colspan="4" class="muted">Sem gastos neste mês.</td></tr>
+      {% endif %}
+    </tbody>
+  </table>
+  <h3>Orçamento vs realizado</h3>
+  <table>
+    <thead><tr><th>Categoria</th><th>Planejado</th><th>Realizado</th><th>Saldo</th></tr></thead>
+    <tbody>
+      {% if summary.budgets %}
+        {% for item in summary.budgets %}
+          <tr>
+            <td>{{ item.category_label }}</td>
+            <td>{{ item.planned_brl }}</td>
+            <td>{{ item.actual_brl }}</td>
+            <td class="{{ 'danger' if item.difference_cents < 0 else '' }}">{{ item.difference_brl }}</td>
+          </tr>
+        {% endfor %}
+      {% else %}
+        <tr><td colspan="4" class="muted">Defina um orçamento pelo chat para comparar aqui.</td></tr>
+      {% endif %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

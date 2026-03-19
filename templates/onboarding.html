@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}EconomIA — Configurar categorias{% endblock %}
+{% block body %}
+<div style="max-width:600px;margin:40px auto;">
+  <div class="pill">Onboarding</div>
+  <h1>Suas categorias</h1>
+  <p class="muted">Escolha as categorias que fazem sentido para você e personalize os nomes se quiser.</p>
+  <form method="post" action="/onboarding" style="margin-top:24px;">
+    {% for cat in categories %}
+    <div class="onboarding-cat">
+      <input type="hidden" name="key_{{ cat.key }}" value="{{ cat.key }}" />
+      <input type="checkbox" name="enabled_{{ cat.key }}" id="cb_{{ cat.key }}"
+             {% if cat.key != 'outros' %}checked{% endif %} />
+      <label for="cb_{{ cat.key }}" style="min-width:30px;cursor:pointer;">✓</label>
+      <input type="text" name="label_{{ cat.key }}" value="{{ cat.label }}"
+             placeholder="{{ cat.label }}" style="flex:1;" />
+      <span class="muted" style="font-size:0.82rem;">{{ cat.examples[:3] | join(', ') }}…</span>
+    </div>
+    {% endfor %}
+    <button type="submit" style="margin-top:24px;width:100%;">Salvar e começar</button>
+  </form>
+</div>
+{% endblock %}

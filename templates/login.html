@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}EconomIA — Entrar{% endblock %}
+{% block body %}
+<div class="auth-wrap">
+  <div class="pill">EconomIA</div>
+  <h1>Entrar</h1>
+  {% if error %}
+    <div class="error-box">{{ error }}</div>
+  {% endif %}
+  <form method="post" action="/login">
+    <input type="text" name="username" placeholder="Usuário" required autofocus />
+    <input type="password" name="password" placeholder="Senha" required />
+    <button type="submit">Entrar</button>
+  </form>
+  <p style="margin-top:16px;">Não tem conta? <a href="/register">Criar conta</a></p>
+</div>
+{% endblock %}

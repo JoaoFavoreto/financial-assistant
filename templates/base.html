@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{% block title %}EconomIA{% endblock %}</title>
+  <style>
+    :root {
+      --bg: #f3efe7;
+      --panel: #fffdf9;
+      --ink: #1f2a2a;
+      --accent: #147d64;
+      --accent-soft: #d8f2ea;
+      --muted: #61706e;
+      --danger: #b94a48;
+      --line: #d8d1c4;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Georgia, "Times New Roman", serif;
+      background:
+        radial-gradient(circle at top left, rgba(20,125,100,0.10), transparent 30%),
+        linear-gradient(180deg, #f7f3ea 0%, var(--bg) 100%);
+      color: var(--ink);
+    }
+    .wrap {
+      max-width: 1120px;
+      margin: 0 auto;
+      padding: 32px 20px 48px;
+    }
+    .hero {
+      display: flex;
+      justify-content: space-between;
+      gap: 20px;
+      align-items: end;
+      margin-bottom: 24px;
+    }
+    h1 {
+      margin: 0 0 8px;
+      font-size: clamp(2rem, 4vw, 3.5rem);
+      line-height: 0.95;
+      letter-spacing: -0.04em;
+    }
+    p { margin: 0; color: var(--muted); }
+    nav a {
+      color: var(--ink);
+      margin-left: 16px;
+      text-decoration: none;
+      font-weight: bold;
+    }
+    nav form { display: inline; margin-left: 16px; }
+    nav button {
+      background: none;
+      border: none;
+      font: inherit;
+      font-weight: bold;
+      cursor: pointer;
+      color: var(--ink);
+      padding: 0;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: 1.3fr 1fr;
+      gap: 20px;
+    }
+    .card {
+      background: rgba(255, 253, 249, 0.92);
+      backdrop-filter: blur(4px);
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      padding: 20px;
+      box-shadow: 0 14px 40px rgba(54, 49, 40, 0.08);
+    }
+    .kpi {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px;
+      margin-bottom: 18px;
+    }
+    .pill {
+      display: inline-block;
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: var(--accent-soft);
+      color: var(--accent);
+      font-size: 0.85rem;
+      font-weight: bold;
+      margin-bottom: 10px;
+    }
+    .metric {
+      background: #f8f4ec;
+      border-radius: 16px;
+      padding: 14px;
+    }
+    .metric strong {
+      display: block;
+      font-size: 1.2rem;
+      margin-top: 6px;
+    }
+    .chat-log {
+      min-height: 360px;
+      max-height: 580px;
+      overflow: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      padding-right: 6px;
+    }
+    .message {
+      padding: 12px 14px;
+      border-radius: 14px;
+      max-width: 88%;
+      white-space: pre-wrap;
+    }
+    .user {
+      align-self: end;
+      background: var(--accent);
+      color: white;
+    }
+    .assistant {
+      align-self: start;
+      background: #f7f1e5;
+      border: 1px solid var(--line);
+    }
+    form { display: grid; gap: 10px; margin-top: 16px; }
+    textarea, input[type="text"], input[type="password"] {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 12px 14px;
+      font: inherit;
+      background: white;
+    }
+    button[type="submit"], .btn {
+      border: 0;
+      border-radius: 999px;
+      background: var(--ink);
+      color: white;
+      padding: 12px 18px;
+      font: inherit;
+      font-weight: bold;
+      cursor: pointer;
+    }
+    table { width: 100%; border-collapse: collapse; font-size: 0.95rem; }
+    th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--line); }
+    .muted { color: var(--muted); }
+    .danger { color: var(--danger); }
+    .error-box {
+      background: #fde8e8;
+      border: 1px solid var(--danger);
+      color: var(--danger);
+      border-radius: 12px;
+      padding: 10px 14px;
+      margin-bottom: 12px;
+    }
+    .auth-wrap {
+      max-width: 420px;
+      margin: 80px auto;
+      padding: 20px;
+    }
+    .onboarding-cat {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 0;
+      border-bottom: 1px solid var(--line);
+    }
+    .onboarding-cat input[type="text"] {
+      flex: 1;
+      padding: 8px 12px;
+    }
+    @media (max-width: 900px) {
+      .grid { grid-template-columns: 1fr; }
+      .kpi { grid-template-columns: 1fr; }
+      nav a { margin-left: 10px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    {% block body %}{% endblock %}
+  </div>
+</body>
+</html>

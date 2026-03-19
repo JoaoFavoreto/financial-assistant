@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}EconomIA — Criar conta{% endblock %}
+{% block body %}
+<div class="auth-wrap">
+  <div class="pill">EconomIA</div>
+  <h1>Criar conta</h1>
+  {% if error %}
+    <div class="error-box">{{ error }}</div>
+  {% endif %}
+  <form method="post" action="/register">
+    <input type="text" name="username" placeholder="Usuário" required autofocus />
+    <input type="password" name="password" placeholder="Senha (mín. 6 caracteres)" required />
+    <input type="password" name="confirm_password" placeholder="Confirmar senha" required />
+    <button type="submit">Criar conta</button>
+  </form>
+  <p style="margin-top:16px;">Já tem conta? <a href="/login">Entrar</a></p>
+</div>
+{% endblock %}

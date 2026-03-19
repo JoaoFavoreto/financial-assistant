@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block title %}EconomIA — Chat{% endblock %}
+{% block body %}
+<section class="hero">
+  <div>
+    <div class="pill">EconomIA</div>
+    <h1>Seu assistente financeiro por conversa.</h1>
+    <p>Registre gastos em linguagem natural e acompanhe o mês em um painel simples.</p>
+    <p class="muted">Modo: {{ llm_mode }} &nbsp;|&nbsp; Olá, {{ user.username }}</p>
+  </div>
+  <nav>
+    <a href="/">Chat</a>
+    <a href="/dashboard">Dashboard</a>
+    <form method="post" action="/logout"><button type="submit">Sair</button></form>
+  </nav>
+</section>
+<div class="grid">
+  <section class="card">
+    <div class="pill">Chat local</div>
+    <div class="chat-log" id="chat-log">
+      {% if chat_history %}
+        {% for item in chat_history[-20:] %}
+          <div class="message {{ item.role }}">{{ item.content }}</div>
+        {% endfor %}
+      {% else %}
+        <div class="muted">Envie sua primeira mensagem para o EconomIA.</div>
+      {% endif %}
+    </div>
+    <form method="post" action="/chat">
+      <textarea name="message" rows="4" placeholder="Ex.: gastei 42,50 no mercado hoje"></textarea>
+      <button type="submit">Enviar mensagem</button>
+    </form>
+  </section>
+  <aside class="card">
+    <div class="pill">Resumo rápido</div>
+    <div class="kpi">
+      <div class="metric"><span class="muted">Total do mês</span><strong>{{ summary.total_brl }}</strong></div>
+      <div class="metric"><span class="muted">Lançamentos</span><strong>{{ summary.expense_count }}</strong></div>
+      <div class="metric"><span class="muted">Categorias</span><strong>{{ summary.categories | length }}</strong></div>
+    </div>
+    <h3>Categorias</h3>
+    <table>
+      <thead><tr><th>Categoria</th><th>Total</th></tr></thead>
+      <tbody>
+        {% if summary.categories %}
+          {% for item in summary.categories %}
+            <tr>
+              <td>{{ item.category_label }}</td>
+              <td>{{ item.amount_brl }}</td>
+            </tr>
+          {% endfor %}
+        {% else %}
+          <tr><td colspan="2" class="muted">Nenhum gasto registrado ainda.</td></tr>
+        {% endif %}
+      </tbody>
+    </table>
+    <h3>Orçamentos</h3>
+    <table>
+      <thead><tr><th>Categoria</th><th>Planejado</th></tr></thead>
+      <tbody>
+        {% if budgets %}
+          {% for item in budgets %}
+            <tr>
+              <td>{{ item.category_label }}</td>
+              <td>{{ cents_to_brl(item.amount_cents) }}</td>
+            </tr>
+          {% endfor %}
+        {% else %}
+          <tr><td colspan="2" class="muted">Nenhum orçamento configurado.</td></tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </aside>
+</div>
+<script>
+  const log = document.getElementById("chat-log");
+  if (log) log.scrollTop = log.scrollHeight;
+</script>
+{% endblock %}
