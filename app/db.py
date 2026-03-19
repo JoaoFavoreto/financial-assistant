@@ -122,6 +122,24 @@ def ensure_database() -> None:
                 connection.execute("UPDATE schema_version SET version = 1")
             connection.commit()
 
+        if version < 2:
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS chat_messages (
+                    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id    INTEGER NOT NULL REFERENCES users(id),
+                    role       TEXT NOT NULL,
+                    content    TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_chat_messages_user_id ON chat_messages(user_id, id DESC)"
+            )
+            connection.execute("UPDATE schema_version SET version = 2")
+            connection.commit()
+
 
 def get_connection() -> sqlite3.Connection:
     ensure_database()

@@ -45,6 +45,15 @@ def get_user_by_username(username: str) -> dict | None:
     return dict(row) if row else None
 
 
+def get_user_by_id(user_id: int) -> dict | None:
+    with get_connection() as connection:
+        row = connection.execute(
+            "SELECT id, username, onboarded FROM users WHERE id = ?",
+            (user_id,),
+        ).fetchone()
+    return dict(row) if row else None
+
+
 def mark_onboarded(user_id: int) -> None:
     with get_connection() as connection:
         connection.execute("UPDATE users SET onboarded = 1 WHERE id = ?", (user_id,))

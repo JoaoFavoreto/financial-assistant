@@ -34,12 +34,20 @@ class LLMExpenseEdit(BaseModel):
     new_date: str | None = None
 
 
+class LLMSearchFilter(BaseModel):
+    category_hint: str | None = None
+    description_hint: str | None = None
+    period: str | None = None  # "this_month"|"last_month"|"this_week"|"last_week"|"last_N_days:N"|"YYYY-MM"
+    granularity: str | None = None  # "total"|"by_day"|"by_category"
+
+
 class LLMMessageInterpretation(BaseModel):
     intent: Literal[
         "create_expenses",
         "set_budget",
         "monthly_summary",
         "category_summary",
+        "filtered_search",
         "edit_expense",
         "delete_expense",
         "help",
@@ -51,6 +59,10 @@ class LLMMessageInterpretation(BaseModel):
     reply_hint: str | None = None
     expense_target: LLMExpenseTarget | None = None
     expense_edit: LLMExpenseEdit | None = None
+    search_filter: LLMSearchFilter | None = None
+
+
+HISTORY_CONTEXT_WINDOW = 10
 
 
 class OpenAIInterpreter:
@@ -58,13 +70,23 @@ class OpenAIInterpreter:
         self.client = OpenAI(api_key=settings.openai_api_key, timeout=settings.economia_llm_timeout)
         self.model = settings.openai_model
 
-    def parse_message(self, message: str, user_id: int | None = None) -> dict:
+    def parse_message(
+        self,
+        message: str,
+        user_id: int | None = None,
+        history: list[dict] | None = None,
+    ) -> dict:
+        messages: list[dict] = [
+            {"role": "system", "content": finance_extraction_skill(user_id=user_id)},
+        ]
+        if history:
+            for turn in history[-HISTORY_CONTEXT_WINDOW:]:
+                messages.append({"role": turn["role"], "content": turn["content"]})
+        messages.append({"role": "user", "content": message})
+
         response = self.client.responses.parse(
             model=self.model,
-            input=[
-                {"role": "system", "content": finance_extraction_skill(user_id=user_id)},
-                {"role": "user", "content": message},
-            ],
+            input=messages,
             text_format=LLMMessageInterpretation,
         )
         return interpretation_to_result(response.output_parsed)
@@ -106,6 +128,12 @@ def interpretation_to_result(payload: LLMMessageInterpretation) -> dict:
         return {
             "intent": "edit_expense",
             "expense_edit": payload.expense_edit or LLMExpenseEdit(target=LLMExpenseTarget()),
+        }
+
+    if payload.intent == "filtered_search":
+        return {
+            "intent": "filtered_search",
+            "search_filter": payload.search_filter or LLMSearchFilter(),
         }
 
     return {"intent": "help"}

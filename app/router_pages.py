@@ -7,15 +7,17 @@ from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
-from app.auth import mark_onboarded
+from app.auth import get_user_by_id, mark_onboarded
 from app.dependencies import require_login
-from app.services import BudgetService, CategoryService, ExpenseService, cents_to_brl
+from app.services import BudgetService, CategoryService, ChatHistoryService, ExpenseService, cents_to_brl
 from app.config import settings
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
 router = APIRouter()
+
+MAX_HISTORY = 20
 
 # Default onboarding categories
 DEFAULT_ONBOARDING_CATEGORIES = [
@@ -35,7 +37,7 @@ async def home(request: Request, user: dict = Depends(require_login)) -> HTMLRes
     today = date.today()
     summary = ExpenseService().get_monthly_summary(today.year, today.month, user_id=user["user_id"])
     budgets = BudgetService().list_budgets(user_id=user["user_id"])
-    chat_history = request.session.get("chat_history", [])
+    chat_history = ChatHistoryService().load_recent(user["user_id"], limit=MAX_HISTORY)
     return templates.TemplateResponse(
         "index.html",
         {
@@ -66,7 +68,18 @@ async def dashboard(request: Request, user: dict = Depends(require_login)) -> HT
 
 
 @router.get("/onboarding", response_class=HTMLResponse)
-async def onboarding_page(request: Request, user: dict = Depends(require_login)) -> HTMLResponse:
+async def onboarding_welcome(request: Request, user: dict = Depends(require_login)) -> HTMLResponse:
+    user_data = get_user_by_id(user["user_id"])
+    if user_data and user_data["onboarded"]:
+        return RedirectResponse("/", status_code=303)
+    return templates.TemplateResponse(
+        "onboarding_welcome.html",
+        {"request": request, "user": user},
+    )
+
+
+@router.get("/onboarding/categories", response_class=HTMLResponse)
+async def onboarding_categories_page(request: Request, user: dict = Depends(require_login)) -> HTMLResponse:
     return templates.TemplateResponse(
         "onboarding.html",
         {
@@ -77,8 +90,8 @@ async def onboarding_page(request: Request, user: dict = Depends(require_login))
     )
 
 
-@router.post("/onboarding")
-async def onboarding_submit(request: Request, user: dict = Depends(require_login)) -> RedirectResponse:
+@router.post("/onboarding/categories")
+async def onboarding_categories_submit(request: Request, user: dict = Depends(require_login)) -> RedirectResponse:
     form = await request.form()
     user_id = user["user_id"]
     category_service = CategoryService()

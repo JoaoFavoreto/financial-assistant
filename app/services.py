@@ -2,10 +2,53 @@ from __future__ import annotations
 
 import difflib
 import json
+import re
 from datetime import date, timedelta
 
 from app.db import get_connection
 from app.parsing import ParsedBudget, ParsedExpense
+
+
+def resolve_period(period: str | None) -> tuple[str, str]:
+    """Returns (start_date_iso, end_date_exclusive_iso) for the given period key."""
+    today = date.today()
+
+    if period is None or period == "this_month":
+        start = date(today.year, today.month, 1)
+        end = date(today.year + 1, 1, 1) if today.month == 12 else date(today.year, today.month + 1, 1)
+    elif period == "last_month":
+        if today.month == 1:
+            start = date(today.year - 1, 12, 1)
+            end = date(today.year, 1, 1)
+        else:
+            start = date(today.year, today.month - 1, 1)
+            end = date(today.year, today.month, 1)
+    elif period == "this_week":
+        start = today - timedelta(days=today.weekday())
+        end = start + timedelta(days=7)
+    elif period == "last_week":
+        start = today - timedelta(days=today.weekday() + 7)
+        end = start + timedelta(days=7)
+    elif period and period.startswith("last_N_days:"):
+        try:
+            n = int(period.split(":")[1])
+        except (ValueError, IndexError):
+            n = 30
+        start = today - timedelta(days=n)
+        end = today + timedelta(days=1)
+    elif period and len(period) == 7:  # "YYYY-MM"
+        try:
+            year, month = int(period[:4]), int(period[5:7])
+            start = date(year, month, 1)
+            end = date(year + 1, 1, 1) if month == 12 else date(year, month + 1, 1)
+        except ValueError:
+            start = date(today.year, today.month, 1)
+            end = date(today.year + 1, 1, 1) if today.month == 12 else date(today.year, today.month + 1, 1)
+    else:
+        start = date(today.year, today.month, 1)
+        end = date(today.year + 1, 1, 1) if today.month == 12 else date(today.year, today.month + 1, 1)
+
+    return start.isoformat(), end.isoformat()
 
 
 class AmbiguousMatchError(Exception):
@@ -259,6 +302,32 @@ class ExpenseService:
 
         return best
 
+    def search_expenses(
+        self,
+        user_id: int,
+        *,
+        start_date: str,
+        end_date: str,
+        category: str | None = None,
+        description_hint: str | None = None,
+    ) -> list[dict]:
+        query = """
+            SELECT id, description, category, amount_cents, expense_date
+            FROM expenses
+            WHERE user_id = ? AND expense_date >= ? AND expense_date < ?
+        """
+        params: list = [user_id, start_date, end_date]
+        if category:
+            query += " AND category = ?"
+            params.append(category.lower())
+        if description_hint:
+            query += " AND LOWER(description) LIKE ?"
+            params.append(f"%{description_hint.lower()}%")
+        query += " ORDER BY expense_date DESC, id DESC"
+        with get_connection() as connection:
+            rows = connection.execute(query, params).fetchall()
+        return [dict(r) for r in rows]
+
     def find_recent_expenses(self, user_id: int, limit: int = 5, within_days: int = 90) -> list[dict]:
         cutoff = (date.today() - timedelta(days=within_days)).isoformat()
         with get_connection() as connection:
@@ -358,6 +427,41 @@ class BudgetService:
         return budgets
 
 
+class ChatHistoryService:
+    MAX_STORED = 200
+
+    def append(self, user_id: int, role: str, content: str) -> None:
+        with get_connection() as connection:
+            connection.execute(
+                "INSERT INTO chat_messages (user_id, role, content) VALUES (?, ?, ?)",
+                (user_id, role, content),
+            )
+            # Prune oldest rows beyond MAX_STORED
+            connection.execute(
+                """
+                DELETE FROM chat_messages
+                WHERE user_id = ? AND id NOT IN (
+                    SELECT id FROM chat_messages WHERE user_id = ?
+                    ORDER BY id DESC LIMIT ?
+                )
+                """,
+                (user_id, user_id, self.MAX_STORED),
+            )
+            connection.commit()
+
+    def load_recent(self, user_id: int, limit: int = 20) -> list[dict]:
+        with get_connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT role, content FROM chat_messages
+                WHERE user_id = ?
+                ORDER BY id DESC LIMIT ?
+                """,
+                (user_id, limit),
+            ).fetchall()
+        return list(reversed([dict(r) for r in rows]))
+
+
 class CategoryService:
     def list_for_user(self, user_id: int) -> list[dict]:
         with get_connection() as connection:
@@ -380,6 +484,51 @@ class CategoryService:
                     """,
                     (user_id, cat["key"], cat["label"], examples_str, cat.get("sort_order", 0)),
                 )
+            connection.commit()
+
+    def add_category(self, user_id: int, key: str, label: str, examples: list[str] | None = None) -> None:
+        if not re.match(r"^[a-z][a-z0-9_]{1,29}$", key):
+            raise ValueError("Chave inválida. Use apenas letras minúsculas, números e underscores (ex.: saude_mental).")
+        examples_str = json.dumps(examples or [], ensure_ascii=False)
+        with get_connection() as connection:
+            existing = connection.execute(
+                "SELECT COUNT(*) FROM user_categories WHERE user_id = ? AND key = ?",
+                (user_id, key),
+            ).fetchone()[0]
+            if existing:
+                raise ValueError(f"Categoria '{key}' já existe.")
+            max_order = connection.execute(
+                "SELECT COALESCE(MAX(sort_order), -1) FROM user_categories WHERE user_id = ?",
+                (user_id,),
+            ).fetchone()[0]
+            connection.execute(
+                "INSERT INTO user_categories (user_id, key, label, examples, sort_order) VALUES (?, ?, ?, ?, ?)",
+                (user_id, key, label, examples_str, max_order + 1),
+            )
+            connection.commit()
+
+    def update_category(self, user_id: int, key: str, label: str) -> None:
+        with get_connection() as connection:
+            connection.execute(
+                "UPDATE user_categories SET label = ? WHERE user_id = ? AND key = ?",
+                (label, user_id, key),
+            )
+            connection.commit()
+
+    def delete_category(self, user_id: int, key: str) -> None:
+        if key == "outros":
+            raise ValueError("A categoria 'outros' é obrigatória e não pode ser removida.")
+        with get_connection() as connection:
+            count = connection.execute(
+                "SELECT COUNT(*) FROM expenses WHERE user_id = ? AND category = ?",
+                (user_id, key),
+            ).fetchone()[0]
+            if count > 0:
+                raise ValueError(f"Esta categoria possui {count} gasto(s). Reclassifique-os antes de excluir.")
+            connection.execute(
+                "DELETE FROM user_categories WHERE user_id = ? AND key = ?",
+                (user_id, key),
+            )
             connection.commit()
 
     def get_label(self, user_id: int, key: str) -> str:

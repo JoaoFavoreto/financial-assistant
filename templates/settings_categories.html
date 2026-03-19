@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+{% block title %}EconomIA — Categorias{% endblock %}
+{% block body %}
+<style>
+  .settings-wrap { max-width: 640px; margin: 40px auto; }
+  .cat-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .cat-row .cat-key {
+    font-size: 0.78rem;
+    color: var(--muted);
+    min-width: 100px;
+    font-family: monospace;
+  }
+  .cat-row input[type="text"] { flex: 1; padding: 8px 12px; }
+  .btn-danger {
+    border: 1px solid var(--danger);
+    background: none;
+    color: var(--danger);
+    border-radius: 999px;
+    padding: 6px 14px;
+    font: inherit;
+    font-size: 0.85rem;
+    cursor: pointer;
+  }
+  .btn-sm {
+    border: 0;
+    border-radius: 999px;
+    background: var(--ink);
+    color: white;
+    padding: 8px 16px;
+    font: inherit;
+    font-size: 0.9rem;
+    font-weight: bold;
+    cursor: pointer;
+  }
+  .add-form {
+    display: grid;
+    grid-template-columns: 1fr 1fr auto;
+    gap: 10px;
+    margin-top: 24px;
+    align-items: end;
+  }
+  .add-form label { font-size: 0.85rem; color: var(--muted); margin-bottom: 4px; display: block; }
+  .add-form input { margin: 0; }
+</style>
+
+<div class="settings-wrap">
+  <nav style="margin-bottom:24px;">
+    <a href="/" style="color:var(--muted);font-size:0.9rem;">← Voltar ao chat</a>
+  </nav>
+
+  <div class="pill">Configurações</div>
+  <h1>Suas categorias</h1>
+  <p class="muted">Renomeie, adicione ou exclua categorias. Categorias com gastos não podem ser excluídas.</p>
+
+  {% if error %}
+  <div class="error-box" style="margin-top:16px;">{{ error }}</div>
+  {% endif %}
+
+  <form method="post" action="/settings/categories/update" style="margin-top:24px;" id="rename-form">
+    {% for cat in categories %}
+    <div class="cat-row">
+      <span class="cat-key">{{ cat.key }}</span>
+      <input type="text" name="label_{{ cat.key }}" value="{{ cat.label }}" placeholder="{{ cat.label }}" form="rename-form" />
+      {% if cat.key != 'outros' %}
+      <button type="button" class="btn-danger"
+        onclick="if(confirm('Excluir categoria \'{{ cat.label }}\'?')){document.getElementById('del-{{ cat.key }}').submit();}">
+        Excluir
+      </button>
+      {% else %}
+      <span class="muted" style="font-size:0.8rem;min-width:70px;">obrigatória</span>
+      {% endif %}
+    </div>
+    {% endfor %}
+    <button type="submit" class="btn-sm" style="margin-top:20px;">Salvar nomes</button>
+  </form>
+
+  {% for cat in categories %}
+  {% if cat.key != 'outros' %}
+  <form id="del-{{ cat.key }}" method="post" action="/settings/categories/delete" style="display:none;">
+    <input type="hidden" name="key" value="{{ cat.key }}" />
+  </form>
+  {% endif %}
+  {% endfor %}
+
+  <hr style="margin:32px 0;border:none;border-top:1px solid var(--line);" />
+
+  <h3 style="margin-bottom:4px;">Adicionar nova categoria</h3>
+  <p class="muted" style="font-size:0.88rem;margin-bottom:0;">A chave deve ser em letras minúsculas sem espaços, ex.: <code style="background:var(--accent-soft);color:var(--accent);border-radius:4px;padding:1px 5px;">saude_mental</code></p>
+
+  <form method="post" action="/settings/categories/add" class="add-form">
+    <div>
+      <label for="new-key">Chave (identificador)</label>
+      <input type="text" id="new-key" name="key" placeholder="ex.: saude_mental" pattern="[a-z][a-z0-9_]{1,29}" required />
+    </div>
+    <div>
+      <label for="new-label">Nome exibido</label>
+      <input type="text" id="new-label" name="label" placeholder="ex.: Saúde Mental" required />
+    </div>
+    <button type="submit" class="btn-sm" style="height:44px;">Adicionar</button>
+  </form>
+</div>
+{% endblock %}

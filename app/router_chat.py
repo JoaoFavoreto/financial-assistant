@@ -17,19 +17,40 @@ from app.replies import (
     reply_expense_not_found,
     reply_expense_updated,
     reply_expenses_created,
+    reply_filtered_search,
     reply_help,
     reply_monthly_summary,
     reply_budget_set,
 )
-from app.services import AmbiguousMatchError, BudgetService, ExpenseService
+from app.services import AmbiguousMatchError, BudgetService, ChatHistoryService, ExpenseService, resolve_period
 
 router = APIRouter()
 
 MAX_HISTORY = 20
 
 
-def _cap_history(history: list) -> list:
-    return history[-MAX_HISTORY:]
+def _build_filter_description(sf: "LLMSearchFilter") -> str:  # type: ignore[name-defined]  # noqa: F821
+    parts = []
+    if sf.description_hint:
+        parts.append(sf.description_hint)
+    if sf.category_hint:
+        from app.services import CATEGORY_LABELS
+        parts.append(CATEGORY_LABELS.get(sf.category_hint, sf.category_hint))
+    if sf.period:
+        period_labels = {
+            "this_month": "este mês",
+            "last_month": "mês passado",
+            "this_week": "esta semana",
+            "last_week": "semana passada",
+        }
+        if sf.period in period_labels:
+            parts.append(period_labels[sf.period])
+        elif sf.period.startswith("last_N_days:"):
+            n = sf.period.split(":")[1]
+            parts.append(f"últimos {n} dias")
+        elif len(sf.period) == 7:
+            parts.append(sf.period)
+    return " / ".join(parts) if parts else "filtro aplicado"
 
 
 def _handle_intent(parsed: dict, user_id: int, request: Request) -> str:
@@ -105,6 +126,20 @@ def _handle_intent(parsed: dict, user_id: int, request: Request) -> str:
         new = service.update_expense(user_id, match["id"], **kwargs)
         return reply_expense_updated(old, new)
 
+    if intent == "filtered_search":
+        sf = parsed["search_filter"]
+        start_date, end_date = resolve_period(sf.period)
+        expenses = ExpenseService().search_expenses(
+            user_id,
+            start_date=start_date,
+            end_date=end_date,
+            category=sf.category_hint,
+            description_hint=sf.description_hint,
+        )
+        total_cents = sum(e["amount_cents"] for e in expenses)
+        filter_desc = _build_filter_description(sf)
+        return reply_filtered_search(expenses, total_cents, filter_desc)
+
     return reply_help(parsed.get("reply_hint"))
 
 
@@ -115,8 +150,7 @@ async def chat(
     user: dict = Depends(require_login),
 ) -> RedirectResponse:
     user_id = user["user_id"]
-    history: list[dict] = request.session.get("chat_history", [])
-    history.append({"role": "user", "content": message})
+    chat_svc = ChatHistoryService()
 
     # Check for pending delete confirmation
     pending_delete_id = request.session.get("pending_delete_id")
@@ -134,15 +168,18 @@ async def chat(
         if not settings.llm_enabled:
             parsed: dict = {"intent": "help", "reply_hint": "Configure OPENAI_API_KEY no arquivo .env para usar o EconomIA."}
         else:
+            # Load recent history for LLM context (before appending the new message)
+            history_for_llm = chat_svc.load_recent(user_id, limit=MAX_HISTORY)
             try:
-                parsed = OpenAIInterpreter().parse_message(message, user_id=user_id)
+                parsed = OpenAIInterpreter().parse_message(message, user_id=user_id, history=history_for_llm)
             except Exception:
                 parsed = {"intent": "help", "reply_hint": "Serviço de interpretação indisponível no momento. Tente novamente em instantes."}
 
         reply = _handle_intent(parsed, user_id, request)
 
-    history.append({"role": "assistant", "content": reply})
-    request.session["chat_history"] = _cap_history(history)
+    # Persist both turns to DB
+    chat_svc.append(user_id, "user", message)
+    chat_svc.append(user_id, "assistant", reply)
 
     return RedirectResponse("/", status_code=303)
 

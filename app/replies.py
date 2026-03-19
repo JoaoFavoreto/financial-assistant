@@ -118,6 +118,32 @@ def reply_confirm_delete(expense: dict) -> str:
     )
 
 
+def reply_filtered_search(expenses: list[dict], total_cents: int, filter_desc: str) -> str:
+    if not expenses:
+        return f"Não encontrei nenhum gasto para {filter_desc}."
+    count = len(expenses)
+    lines = "\n".join(
+        f"- {cents_to_brl(e['amount_cents'])} em {format_category(e['category'])} "
+        f"({e['description']}) — {e['expense_date']}"
+        for e in expenses[:20]
+    )
+    suffix = f"\n\n_(mostrando {min(count, 20)} de {count})_" if count > 20 else ""
+    return (
+        f"Encontrei {count} {pluralize(count, 'gasto', 'gastos')} para {filter_desc}, "
+        f"totalizando {cents_to_brl(total_cents)}.\n\n"
+        f"{lines}{suffix}"
+    )
+
+
+def reply_manage_categories() -> str:
+    return (
+        "Para gerenciar suas categorias — adicionar, renomear ou excluir — "
+        "acesse a página de configurações:\n\n"
+        "→ /settings/categories\n\n"
+        "Lá você pode personalizar as categorias do jeito que preferir."
+    )
+
+
 def reply_help(hint: str | None = None) -> str:
     base = hint or "Hmmm, essa eu não consegui pegar direito. Mas posso te ajudar com gastos, categorias, orçamento e resumo do mês."
     return (

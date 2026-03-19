@@ -5,7 +5,8 @@
   <div class="pill">Onboarding</div>
   <h1>Suas categorias</h1>
   <p class="muted">Escolha as categorias que fazem sentido para você e personalize os nomes se quiser.</p>
-  <form method="post" action="/onboarding" style="margin-top:24px;">
+  <p class="muted" style="margin-top:6px;font-size:0.88rem;">Você pode adicionar, renomear ou excluir categorias depois em <a href="/settings/categories" style="color:var(--accent);">Configurações</a>.</p>
+  <form method="post" action="/onboarding/categories" style="margin-top:24px;">
     {% for cat in categories %}
     <div class="onboarding-cat">
       <input type="hidden" name="key_{{ cat.key }}" value="{{ cat.key }}" />

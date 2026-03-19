@@ -66,8 +66,13 @@ def finance_extraction_skill(user_id: int | None = None) -> str:
         Regras obrigatorias:
         - Responda somente com JSON valido compativel com o schema solicitado.
         - Nao invente valores que nao estejam razoavelmente presentes na mensagem.
-        - Se a mensagem for sobre resumo mensal, use a intencao `monthly_summary`.
-        - Se a mensagem for sobre categorias, use a intencao `category_summary`.
+        - Se a mensagem for sobre resumo mensal geral (sem filtros), use a intencao `monthly_summary`.
+        - Se a mensagem for sobre categorias (sem filtros), use a intencao `category_summary`.
+        - Se a mensagem pedir gastos filtrados por categoria, descricao ou periodo (ex.: "quanto gastei no uber esse mes?", "gastos de transporte em fevereiro", "o que gastei essa semana?"), use a intencao `filtered_search` e preencha `search_filter` com:
+          - `category_hint`: chave da categoria, se mencionada (ex.: "transporte", "alimentacao")
+          - `description_hint`: palavra-chave da descricao, se mencionada (ex.: "uber", "mercado")
+          - `period`: um dos valores: "this_month", "last_month", "this_week", "last_week", "last_N_days:N" ou "YYYY-MM" para mes especifico
+          - `granularity`: "total" (padrao), "by_day" ou "by_category"
         - Se a mensagem for sobre definir orcamento, use a intencao `set_budget`.
         - Se a mensagem registrar um ou mais gastos, use a intencao `create_expenses` com todos os gastos na lista `expenses`.
         - Se a mensagem pedir para apagar, remover ou deletar um gasto, use a intencao `delete_expense` e preencha `expense_target` com as pistas disponiveis (description_hint, category_hint, amount_brl_hint, date_hint).
