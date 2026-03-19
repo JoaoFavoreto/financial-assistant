@@ -10,7 +10,7 @@ from app import db
 from app.auth import create_user
 from app.llm import LLMExpenseTarget
 from app.parsing import ParsedExpense
-from app.services import ExpenseService
+from app.services import AmbiguousMatchError, ExpenseService
 
 
 class EditDeleteTests(unittest.TestCase):
@@ -60,25 +60,23 @@ class EditDeleteTests(unittest.TestCase):
         self.assertIsNotNone(match)
         self.assertEqual(match["amount_cents"], 4500)
 
-    def test_find_best_match_returns_none_when_ambiguous(self) -> None:
-        # Add a very similar expense to force ambiguity
+    def test_find_best_match_raises_when_ambiguous(self) -> None:
+        # Add an expense with identical description and amount to force ambiguity
         today = date.today()
         self.service.create_expense(
             ParsedExpense(
-                description="uber para o trabalho",
+                description="uber para o aeroporto",  # same as setUp expense
                 category="transporte",
-                amount_cents=4500,
+                amount_cents=4500,  # same amount
                 expense_date=today,
             ),
             user_id=self.user_id,
         )
-        # Now searching for "uber" with no other hints should be ambiguous
-        target = LLMExpenseTarget(description_hint="uber", amount_brl_hint="45.00")
-        match = self.service.find_best_match(self.user_id, target)
-        # With two identically-scored candidates, should be ambiguous → None
-        # (depends on score diff; at least no crash)
-        # Either None (ambiguous) or a match is acceptable, just no exception
-        self.assertTrue(match is None or isinstance(match, dict))
+        # Searching only by amount (no date hint to distinguish) should be ambiguous
+        target = LLMExpenseTarget(amount_brl_hint="45.00")
+        with self.assertRaises(AmbiguousMatchError) as ctx:
+            self.service.find_best_match(self.user_id, target)
+        self.assertGreaterEqual(len(ctx.exception.candidates), 2)
 
     def test_delete_expense_reduces_count(self) -> None:
         summary_before = self.service.get_monthly_summary(

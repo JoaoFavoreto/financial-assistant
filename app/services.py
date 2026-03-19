@@ -8,6 +8,12 @@ from app.db import get_connection
 from app.parsing import ParsedBudget, ParsedExpense
 
 
+class AmbiguousMatchError(Exception):
+    def __init__(self, candidates: list[dict]) -> None:
+        self.candidates = candidates
+        super().__init__("Múltiplos gastos correspondentes encontrados.")
+
+
 CATEGORY_LABELS = {
     "alimentacao": "Alimentação",
     "transporte": "Transporte",
@@ -153,32 +159,11 @@ class ExpenseService:
             "recent_expenses": recent_expenses,
         }
 
-    def find_best_match(
+    def _score_candidates(
         self,
-        user_id: int,
+        candidates: list[dict],
         target: "LLMExpenseTarget",  # type: ignore[name-defined]  # noqa: F821
-        within_days: int = 90,
-    ) -> dict | None:
-        """
-        Find the best matching expense for a given target.
-        Returns None if no match found or if ambiguous (two candidates with very close scores).
-        """
-        cutoff = (date.today() - timedelta(days=within_days)).isoformat()
-        with get_connection() as connection:
-            rows = connection.execute(
-                """
-                SELECT id, description, category, amount_cents, expense_date, source_type, created_at
-                FROM expenses
-                WHERE user_id = ? AND expense_date >= ?
-                ORDER BY expense_date DESC, id DESC
-                """,
-                (user_id, cutoff),
-            ).fetchall()
-
-        candidates = [dict(row) for row in rows]
-        if not candidates:
-            return None
-
+    ) -> list[tuple[float, dict]]:
         scored: list[tuple[float, dict]] = []
         for expense in candidates:
             score = 0.0
@@ -187,7 +172,7 @@ class ExpenseService:
                 ratio = difflib.SequenceMatcher(
                     None, target.description_hint.lower(), expense["description"].lower()
                 ).ratio()
-                score += ratio * 3  # description weighted more
+                score += ratio * 3
 
             if target.category_hint and expense["category"] == target.category_hint.lower():
                 score += 1.0
@@ -210,7 +195,7 @@ class ExpenseService:
                 elif target.date_hint == "yesterday":
                     target_date = (today - timedelta(days=1)).isoformat()
                 elif target.date_hint == "last":
-                    target_date = None  # just boost recent
+                    target_date = None
                 else:
                     target_date = target.date_hint
                 if target_date and expense["expense_date"] == target_date:
@@ -219,22 +204,75 @@ class ExpenseService:
             if score > 0:
                 scored.append((score, expense))
 
+        scored.sort(key=lambda x: x[0], reverse=True)
+        return scored
+
+    def find_best_match(
+        self,
+        user_id: int,
+        target: "LLMExpenseTarget",  # type: ignore[name-defined]  # noqa: F821
+        within_days: int = 90,
+    ) -> dict | None:
+        """
+        Returns the best unique match, or None if not found.
+        Raises AmbiguousMatchError if two candidates score too close.
+        """
+        cutoff = (date.today() - timedelta(days=within_days)).isoformat()
+        with get_connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT id, description, category, amount_cents, expense_date, source_type, created_at
+                FROM expenses
+                WHERE user_id = ? AND expense_date >= ?
+                ORDER BY expense_date DESC, id DESC
+                """,
+                (user_id, cutoff),
+            ).fetchall()
+
+        candidates = [dict(row) for row in rows]
+        if not candidates:
+            return None
+
+        # No hints at all — can't match
+        has_hints = any([
+            target.description_hint,
+            target.category_hint,
+            target.amount_brl_hint,
+            target.date_hint,
+        ])
+        if not has_hints:
+            return None
+
+        scored = self._score_candidates(candidates, target)
         if not scored:
             return None
 
-        scored.sort(key=lambda x: x[0], reverse=True)
         best_score, best = scored[0]
-
-        if len(scored) >= 2:
-            second_score = scored[1][0]
-            # Ambiguous if second candidate is within 15% of best
-            if second_score > 0 and (best_score - second_score) / best_score < 0.15:
-                return None  # ambiguous
-
-        if best_score < 0.3:
+        if best_score < 0.1:
             return None
 
+        # Ambiguous: two strong candidates within 5% of each other
+        if len(scored) >= 2:
+            second_score = scored[1][0]
+            if second_score >= 0.1 and (best_score - second_score) / best_score < 0.05:
+                raise AmbiguousMatchError([exp for _, exp in scored[:5]])
+
         return best
+
+    def find_recent_expenses(self, user_id: int, limit: int = 5, within_days: int = 90) -> list[dict]:
+        cutoff = (date.today() - timedelta(days=within_days)).isoformat()
+        with get_connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT id, description, category, amount_cents, expense_date
+                FROM expenses
+                WHERE user_id = ? AND expense_date >= ?
+                ORDER BY expense_date DESC, id DESC
+                LIMIT ?
+                """,
+                (user_id, cutoff, limit),
+            ).fetchall()
+        return [dict(row) for row in rows]
 
     def delete_expense(self, user_id: int, expense_id: int) -> dict:
         with get_connection() as connection:

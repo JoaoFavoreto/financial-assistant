@@ -21,7 +21,7 @@ from app.replies import (
     reply_monthly_summary,
     reply_budget_set,
 )
-from app.services import BudgetService, ExpenseService
+from app.services import AmbiguousMatchError, BudgetService, ExpenseService
 
 router = APIRouter()
 
@@ -60,9 +60,18 @@ def _handle_intent(parsed: dict, user_id: int, request: Request) -> str:
     if intent == "delete_expense":
         target: LLMExpenseTarget = parsed["expense_target"]
         service = ExpenseService()
-        match = service.find_best_match(user_id, target)
+        try:
+            match = service.find_best_match(user_id, target)
+        except AmbiguousMatchError as exc:
+            return reply_ambiguous_match(exc.candidates)
         if match is None:
-            hint = target.description_hint or target.category_hint or "gasto não identificado"
+            hint = target.description_hint or target.category_hint or None
+            if hint is None:
+                # No hints at all — list recent expenses to help user be specific
+                recent = service.find_recent_expenses(user_id, limit=5)
+                if recent:
+                    return reply_ambiguous_match(recent)
+                return reply_expense_not_found("gasto não identificado")
             return reply_expense_not_found(hint)
         # Save pending delete in session
         request.session["pending_delete_id"] = match["id"]
@@ -72,7 +81,10 @@ def _handle_intent(parsed: dict, user_id: int, request: Request) -> str:
         expense_edit = parsed["expense_edit"]
         target = expense_edit.target
         service = ExpenseService()
-        match = service.find_best_match(user_id, target)
+        try:
+            match = service.find_best_match(user_id, target)
+        except AmbiguousMatchError as exc:
+            return reply_ambiguous_match(exc.candidates)
         if match is None:
             hint = target.description_hint or target.category_hint or "gasto não identificado"
             return reply_expense_not_found(hint)
