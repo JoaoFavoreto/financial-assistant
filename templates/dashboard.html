@@ -1,4 +1,4 @@
-{% extends "base.html" %}
+﻿{% extends "base.html" %}
 {% block title %}EconomIA — Dashboard{% endblock %}
 {% block body %}
 <section class="hero">
@@ -10,24 +10,61 @@
   <nav>
     <a href="/">Chat</a>
     <a href="/dashboard">Dashboard</a>
+    <a href="/settings/categories">Categorias</a>
     <form method="post" action="/logout"><button type="submit">Sair</button></form>
   </nav>
 </section>
 <section class="card">
   <div class="kpi">
-    <div class="metric"><span class="muted">Total gasto</span><strong>{{ summary.total_brl }}</strong></div>
+    <div class="metric"><span class="muted">Total do mês</span><strong>{{ summary.total_brl }}</strong></div>
     <div class="metric"><span class="muted">Lançamentos</span><strong>{{ summary.expense_count }}</strong></div>
-    <div class="metric">
-      <span class="muted">Ticket médio</span>
-      <strong>
-        {% if summary.expense_count %}
-          {{ cents_to_brl((summary.total_cents / summary.expense_count) | int) }}
-        {% else %}
-          R$ 0,00
-        {% endif %}
-      </strong>
-    </div>
+    <div class="metric"><span class="muted">Total da semana</span><strong>{{ weekly.total_brl }}</strong></div>
   </div>
+
+  {% if summary.insights %}
+    <div class="callout">
+      <strong>Leitura rápida</strong>
+      <ul>
+        {% for insight in summary.insights %}
+          <li>{{ insight }}</li>
+        {% endfor %}
+      </ul>
+    </div>
+  {% endif %}
+
+  {% if summary.budget_alerts %}
+    <div class="callout">
+      <strong>Orçamento em atenção</strong>
+      <ul>
+        {% for alert in summary.budget_alerts[:2] %}
+          <li class="{{ 'danger' if alert.level == 'over_budget' else 'warning' }}">{{ alert.message }}</li>
+        {% endfor %}
+      </ul>
+    </div>
+  {% endif %}
+
+  <h3>Esta semana</h3>
+  <table>
+    <tbody>
+      <tr>
+        <th>Total</th>
+        <td>{{ weekly.total_brl }}</td>
+      </tr>
+      <tr>
+        <th>Gastos</th>
+        <td>{{ weekly.expense_count }}</td>
+      </tr>
+      <tr>
+        <th>Categoria principal</th>
+        <td>{% if weekly.top_category %}{{ weekly.top_category.category_label }}{% else %}—{% endif %}</td>
+      </tr>
+      <tr>
+        <th>Comparação</th>
+        <td>{{ weekly.comparison.text }}</td>
+      </tr>
+    </tbody>
+  </table>
+
   <h3>Últimos gastos</h3>
   <table>
     <thead><tr><th>Data</th><th>Descrição</th><th>Categoria</th><th>Valor</th></tr></thead>
@@ -46,6 +83,7 @@
       {% endif %}
     </tbody>
   </table>
+
   <h3>Orçamento vs realizado</h3>
   <table>
     <thead><tr><th>Categoria</th><th>Planejado</th><th>Realizado</th><th>Saldo</th></tr></thead>

@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from datetime import date, timedelta
 from decimal import Decimal, ROUND_HALF_UP
@@ -37,8 +37,18 @@ class LLMExpenseEdit(BaseModel):
 class LLMSearchFilter(BaseModel):
     category_hint: str | None = None
     description_hint: str | None = None
-    period: str | None = None  # "this_month"|"last_month"|"this_week"|"last_week"|"last_N_days:N"|"YYYY-MM"
+    period: str | None = None  # "today"|"yesterday"|"this_month"|"last_month"|"this_week"|"last_week"|"last_N_days:N"|"YYYY-MM"
     granularity: str | None = None  # "total"|"by_day"|"by_category"
+    limit: int | None = None
+
+
+class LLMRecurringExpense(BaseModel):
+    description: str
+    category: str
+    amount_brl: str
+    frequency: str  # 'monthly' | 'weekly'
+    day_of_month: int | None = None  # 1-28
+    day_of_week: int | None = None  # 0-6
 
 
 class LLMMessageInterpretation(BaseModel):
@@ -46,10 +56,14 @@ class LLMMessageInterpretation(BaseModel):
         "create_expenses",
         "set_budget",
         "monthly_summary",
+        "weekly_summary",
         "category_summary",
         "filtered_search",
         "edit_expense",
         "delete_expense",
+        "create_recurring_expense",
+        "list_recurring_expenses",
+        "delete_recurring_expense",
         "help",
         "empty",
     ]
@@ -60,6 +74,8 @@ class LLMMessageInterpretation(BaseModel):
     expense_target: LLMExpenseTarget | None = None
     expense_edit: LLMExpenseEdit | None = None
     search_filter: LLMSearchFilter | None = None
+    recurring_expense: LLMRecurringExpense | None = None
+    recurring_target: str | None = None  # hint para delete
 
 
 HISTORY_CONTEXT_WINDOW = 10
@@ -93,7 +109,7 @@ class OpenAIInterpreter:
 
 
 def interpretation_to_result(payload: LLMMessageInterpretation) -> dict:
-    if payload.intent in {"monthly_summary", "category_summary", "help", "empty"}:
+    if payload.intent in {"monthly_summary", "weekly_summary", "category_summary", "help", "empty"}:
         result: dict = {"intent": payload.intent}
         if payload.reply_hint:
             result["reply_hint"] = payload.reply_hint
@@ -101,7 +117,7 @@ def interpretation_to_result(payload: LLMMessageInterpretation) -> dict:
 
     if payload.intent == "set_budget":
         if not payload.budget_category or not payload.budget_amount_brl:
-            return {"intent": "help", "reply_hint": "Nao consegui identificar categoria e valor do orcamento."}
+            return {"intent": "help", "reply_hint": "Não consegui identificar categoria e valor do orçamento."}
         return {
             "intent": "set_budget",
             "budget": ParsedBudget(
@@ -112,7 +128,7 @@ def interpretation_to_result(payload: LLMMessageInterpretation) -> dict:
 
     if payload.intent == "create_expenses":
         if not payload.expenses:
-            return {"intent": "help", "reply_hint": "Nao consegui identificar nenhum gasto."}
+            return {"intent": "help", "reply_hint": "Não consegui identificar nenhum gasto."}
         return {
             "intent": "create_expenses",
             "expenses": [_build_expense(e) for e in payload.expenses],
@@ -134,6 +150,24 @@ def interpretation_to_result(payload: LLMMessageInterpretation) -> dict:
         return {
             "intent": "filtered_search",
             "search_filter": payload.search_filter or LLMSearchFilter(),
+        }
+
+    if payload.intent == "create_recurring_expense":
+        rec = payload.recurring_expense
+        if not rec:
+            return {"intent": "help", "reply_hint": "Não consegui identificar os dados do gasto recorrente."}
+        return {
+            "intent": "create_recurring_expense",
+            "recurring_expense": rec,
+        }
+
+    if payload.intent == "list_recurring_expenses":
+        return {"intent": "list_recurring_expenses"}
+
+    if payload.intent == "delete_recurring_expense":
+        return {
+            "intent": "delete_recurring_expense",
+            "recurring_target": payload.recurring_target,
         }
 
     return {"intent": "help"}

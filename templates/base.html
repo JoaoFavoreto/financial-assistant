@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
   <meta charset="utf-8" />
@@ -13,6 +13,7 @@
       --accent-soft: #d8f2ea;
       --muted: #61706e;
       --danger: #b94a48;
+      --warning: #b17617;
       --line: #d8d1c4;
     }
     * { box-sizing: border-box; }
@@ -41,6 +42,9 @@
       font-size: clamp(2rem, 4vw, 3.5rem);
       line-height: 0.95;
       letter-spacing: -0.04em;
+    }
+    h3 {
+      margin: 18px 0 10px;
     }
     p { margin: 0; color: var(--muted); }
     nav a {
@@ -144,8 +148,17 @@
     }
     table { width: 100%; border-collapse: collapse; font-size: 0.95rem; }
     th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--line); }
+    ul { margin: 8px 0 0; padding-left: 18px; }
     .muted { color: var(--muted); }
     .danger { color: var(--danger); }
+    .warning { color: var(--warning); }
+    .callout {
+      background: #f8f4ec;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 14px;
+      margin-top: 14px;
+    }
     .error-box {
       background: #fde8e8;
       border: 1px solid var(--danger);

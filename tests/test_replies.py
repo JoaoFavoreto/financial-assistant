@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import unittest
 from datetime import date
@@ -16,6 +16,7 @@ from app.replies import (
     reply_expenses_created,
     reply_help,
     reply_monthly_summary,
+    reply_weekly_summary,
 )
 
 
@@ -24,6 +25,7 @@ class RepliesTests(unittest.TestCase):
         text = reply_empty()
         self.assertIn("EconomIA", text)
         self.assertIn("WhatsApp", text)
+        self.assertIn("você", text)
 
     def test_reply_expenses_created_single(self) -> None:
         expenses = [
@@ -35,18 +37,22 @@ class RepliesTests(unittest.TestCase):
             )
         ]
         text = reply_expenses_created(expenses)
-        self.assertIn("1 gasto", text)
         self.assertIn("42,50", text)
         self.assertIn("mercado", text)
+        self.assertIn("semana", text.lower())
 
-    def test_reply_expenses_created_multiple(self) -> None:
+    def test_reply_expenses_created_multiple_with_alert(self) -> None:
         expenses = [
             ParsedExpense(description="uber", category="transporte", amount_cents=1800, expense_date=date.today()),
             ParsedExpense(description="padaria", category="alimentacao", amount_cents=900, expense_date=date.today()),
         ]
-        text = reply_expenses_created(expenses)
+        text = reply_expenses_created(
+            expenses,
+            budget_alerts=[{"message": "Alimentação já consumiu 80% do orçamento do mês."}],
+        )
         self.assertIn("2 gastos", text)
         self.assertIn("27,00", text)
+        self.assertIn("80%", text)
 
     def test_reply_budget_set(self) -> None:
         budget = ParsedBudget(category="alimentacao", amount_cents=120000)
@@ -64,12 +70,29 @@ class RepliesTests(unittest.TestCase):
             "expense_count": 3,
             "total_brl": "R$ 150,00",
             "categories": [{"category_label": "Alimentação", "amount_brl": "R$ 100,00"}],
-            "budgets": [],
+            "top_category": {"category_label": "Alimentação", "amount_brl": "R$ 100,00"},
+            "budget_alerts": [{"message": "Alimentação já consumiu 83% do orçamento do mês."}],
+            "insights": ["R$ 20,00 a mais em relação a mês passado."],
         }
         text = reply_monthly_summary(summary)
         self.assertIn("3 gastos", text)
         self.assertIn("150,00", text)
         self.assertIn("Alimentação", text)
+        self.assertIn("Leitura rápida", text)
+
+    def test_reply_weekly_summary_with_data(self) -> None:
+        summary = {
+            "expense_count": 2,
+            "total_brl": "R$ 70,00",
+            "top_category": {"category_label": "Transporte", "amount_brl": "R$ 40,00"},
+            "comparison": {"text": "R$ 20,00 a mais em relação a semana passada."},
+            "budget_alerts": [],
+            "insights": ["Transporte lidera seus gastos nesta semana, com R$ 40,00."],
+        }
+        text = reply_weekly_summary(summary)
+        self.assertIn("Nesta semana", text)
+        self.assertIn("70,00", text)
+        self.assertIn("semana passada", text)
 
     def test_reply_category_summary_empty(self) -> None:
         summary = {"categories": []}
@@ -109,6 +132,7 @@ class RepliesTests(unittest.TestCase):
         ]
         text = reply_ambiguous_match(candidates)
         self.assertIn("mais de um", text.lower())
+        self.assertIn("você", text.lower())
 
     def test_reply_confirm_delete(self) -> None:
         expense = {
@@ -124,6 +148,7 @@ class RepliesTests(unittest.TestCase):
     def test_reply_help_default(self) -> None:
         text = reply_help()
         self.assertIn("categorias", text.lower())
+        self.assertIn("orçamento", text.lower())
 
     def test_reply_expense_updated(self) -> None:
         old = {"description": "uber", "category": "transporte", "amount_cents": 1500, "expense_date": "2026-03-18"}

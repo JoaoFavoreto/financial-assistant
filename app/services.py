@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import difflib
 import json
@@ -13,7 +13,13 @@ def resolve_period(period: str | None) -> tuple[str, str]:
     """Returns (start_date_iso, end_date_exclusive_iso) for the given period key."""
     today = date.today()
 
-    if period is None or period == "this_month":
+    if period == "today":
+        start = today
+        end = today + timedelta(days=1)
+    elif period == "yesterday":
+        start = today - timedelta(days=1)
+        end = today
+    elif period is None or period == "this_month":
         start = date(today.year, today.month, 1)
         end = date(today.year + 1, 1, 1) if today.month == 12 else date(today.year, today.month + 1, 1)
     elif period == "last_month":
@@ -310,9 +316,10 @@ class ExpenseService:
         end_date: str,
         category: str | None = None,
         description_hint: str | None = None,
+        limit: int | None = None,
     ) -> list[dict]:
         query = """
-            SELECT id, description, category, amount_cents, expense_date
+            SELECT id, description, category, amount_cents, expense_date, source_type
             FROM expenses
             WHERE user_id = ? AND expense_date >= ? AND expense_date < ?
         """
@@ -324,6 +331,9 @@ class ExpenseService:
             query += " AND LOWER(description) LIKE ?"
             params.append(f"%{description_hint.lower()}%")
         query += " ORDER BY expense_date DESC, id DESC"
+        if limit is not None:
+            query += " LIMIT ?"
+            params.append(limit)
         with get_connection() as connection:
             rows = connection.execute(query, params).fetchall()
         return [dict(r) for r in rows]
@@ -538,3 +548,138 @@ class CategoryService:
                 (user_id, key),
             ).fetchone()
         return row["label"] if row else ""
+
+
+class RecurringExpenseService:
+    def create(
+        self,
+        user_id: int,
+        description: str,
+        category: str,
+        amount_cents: int,
+        frequency: str,
+        day: int,
+    ) -> dict:
+        if frequency not in ("monthly", "weekly"):
+            raise ValueError("frequency deve ser 'monthly' ou 'weekly'.")
+        if frequency == "monthly" and not (1 <= day <= 28):
+            raise ValueError("day_of_month deve ser entre 1 e 28.")
+        if frequency == "weekly" and not (0 <= day <= 6):
+            raise ValueError("day_of_week deve ser entre 0 (seg) e 6 (dom).")
+
+        day_of_month = day if frequency == "monthly" else None
+        day_of_week = day if frequency == "weekly" else None
+
+        with get_connection() as connection:
+            cursor = connection.execute(
+                """
+                INSERT INTO recurring_expenses
+                    (user_id, description, category, amount_cents, frequency, day_of_month, day_of_week)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (user_id, description, category, amount_cents, frequency, day_of_month, day_of_week),
+            )
+            connection.commit()
+            row = connection.execute(
+                "SELECT * FROM recurring_expenses WHERE id = ?", (cursor.lastrowid,)
+            ).fetchone()
+        return dict(row)
+
+    def list_for_user(self, user_id: int) -> list[dict]:
+        with get_connection() as connection:
+            rows = connection.execute(
+                "SELECT * FROM recurring_expenses WHERE user_id = ? AND active = 1 ORDER BY id ASC",
+                (user_id,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def deactivate(self, user_id: int, recurring_id: int) -> dict:
+        with get_connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM recurring_expenses WHERE id = ? AND user_id = ? AND active = 1",
+                (recurring_id, user_id),
+            ).fetchone()
+            if not row:
+                raise ValueError(f"Recorrente {recurring_id} não encontrado.")
+            connection.execute(
+                "UPDATE recurring_expenses SET active = 0 WHERE id = ?",
+                (recurring_id,),
+            )
+            connection.commit()
+        return dict(row)
+
+    def find_by_description_hint(self, user_id: int, hint: str) -> list[dict]:
+        with get_connection() as connection:
+            rows = connection.execute(
+                "SELECT * FROM recurring_expenses WHERE user_id = ? AND active = 1",
+                (user_id,),
+            ).fetchall()
+        candidates = [dict(r) for r in rows]
+        if not hint:
+            return candidates
+        hint_lower = hint.lower()
+        return [c for c in candidates if hint_lower in c["description"].lower()]
+
+    def generate_pending(self, user_id: int) -> list[dict]:
+        today = date.today()
+        recurrings = self.list_for_user(user_id)
+        generated = []
+
+        for rec in recurrings:
+            last_iso: str | None = rec["last_generated"]
+            last = date.fromisoformat(last_iso) if last_iso else None
+
+            if rec["frequency"] == "monthly":
+                dom = rec["day_of_month"]
+                # Start of current month
+                month_start = date(today.year, today.month, 1)
+                # Due date this month (clamped to 28)
+                due_day = min(dom, 28)
+                due_this_month = date(today.year, today.month, due_day)
+
+                if today >= due_this_month and (last is None or last < month_start):
+                    expense_date = due_this_month
+                    self._insert_and_update(rec, user_id, expense_date, today)
+                    generated.append(rec)
+
+            elif rec["frequency"] == "weekly":
+                dow = rec["day_of_week"]
+                # Find all due dates since last_generated (or up to 4 weeks back)
+                if last is None:
+                    # Generate once for the most recent past occurrence
+                    days_ago = (today.weekday() - dow) % 7
+                    due = today - timedelta(days=days_ago)
+                    if due <= today:
+                        self._insert_and_update(rec, user_id, due, today)
+                        generated.append(rec)
+                else:
+                    # Generate for each week that has passed since last
+                    next_due = last + timedelta(days=1)
+                    # Advance to the next matching weekday
+                    days_until = (dow - next_due.weekday()) % 7
+                    next_due = next_due + timedelta(days=days_until)
+                    while next_due <= today:
+                        self._insert_and_update(rec, user_id, next_due, today)
+                        generated.append(rec)
+                        next_due += timedelta(weeks=1)
+
+        return generated
+
+    def _insert_and_update(self, rec: dict, user_id: int, expense_date: date, today: date) -> None:
+        from app.parsing import ParsedExpense
+        expense = ParsedExpense(
+            description=rec["description"],
+            category=rec["category"],
+            amount_cents=rec["amount_cents"],
+            expense_date=expense_date,
+            source_type="recurring",
+        )
+        ExpenseService().create_expense(expense, user_id=user_id)
+        with get_connection() as connection:
+            connection.execute(
+                "UPDATE recurring_expenses SET last_generated = ? WHERE id = ?",
+                (today.isoformat(), rec["id"]),
+            )
+            connection.commit()
+
+
