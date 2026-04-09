@@ -60,6 +60,15 @@ class LLMRecurringExpense(BaseModel):
     day_of_week: int | None = None  # 0-6
 
 
+class LLMCardInstallmentPurchase(BaseModel):
+    description: str
+    category: str
+    installment_amount_brl: str
+    installments: int
+    first_expense_date: str = "today"
+    card_label: str | None = None
+
+
 class LLMMessageInterpretation(BaseModel):
     intent: Literal[
         "create_expenses",
@@ -71,6 +80,7 @@ class LLMMessageInterpretation(BaseModel):
         "edit_expense",
         "delete_expense",
         "create_recurring_expense",
+        "create_card_installment_purchase",
         "list_recurring_expenses",
         "delete_recurring_expense",
         "help",
@@ -86,6 +96,7 @@ class LLMMessageInterpretation(BaseModel):
     search_filter: LLMSearchFilter | None = None
     recurring_expense: LLMRecurringExpense | None = None
     recurring_expenses: list[LLMRecurringExpense] = []
+    card_installment_purchase: LLMCardInstallmentPurchase | None = None
     recurring_target: str | None = None  # hint para delete
 
 
@@ -315,6 +326,15 @@ def interpretation_to_result(payload: LLMMessageInterpretation) -> dict:
         return {
             "intent": "create_recurring_expense",
             "recurring_expense": rec,
+        }
+
+    if payload.intent == "create_card_installment_purchase":
+        card = payload.card_installment_purchase
+        if not card:
+            return {"intent": "help", "reply_hint": "Não consegui identificar os dados do parcelamento no cartão."}
+        return {
+            "intent": "create_card_installment_purchase",
+            "card_purchase": card,
         }
 
     if payload.intent == "list_recurring_expenses":

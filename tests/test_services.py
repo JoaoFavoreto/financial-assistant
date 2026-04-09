@@ -123,6 +123,36 @@ class ServicesTests(unittest.TestCase):
         )
         self.assertEqual(summary2["expense_count"], 0)
 
+    def test_create_card_installment_purchase_generates_all_installments(self) -> None:
+        ids = self.expense_service.create_card_installment_purchase(
+            user_id=self.user_id,
+            description="notebook",
+            category="compras",
+            installment_amount_cents=25000,
+            installment_total=4,
+            purchase_total_cents=100000,
+            first_expense_date=date.today(),
+            card_label="nubank",
+        )
+        self.assertEqual(len(ids), 4)
+        summary = self.expense_service.get_monthly_summary(date.today().year, date.today().month, user_id=self.user_id)
+        self.assertEqual(summary["expense_count"], 1)
+        self.assertEqual(summary["total_cents"], 25000)
+
+    def test_delete_installment_series_removes_all_rows(self) -> None:
+        ids = self.expense_service.create_card_installment_purchase(
+            user_id=self.user_id,
+            description="celular",
+            category="compras",
+            installment_amount_cents=10000,
+            installment_total=3,
+            purchase_total_cents=30000,
+            first_expense_date=date.today(),
+            card_label="cartao",
+        )
+        deleted = self.expense_service.delete_installment_series(self.user_id, ids[0])
+        self.assertEqual(deleted, 3)
+
 
 if __name__ == "__main__":
     unittest.main()

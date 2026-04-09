@@ -22,13 +22,57 @@
     <strong style="color:var(--accent);">{{ import_success }}</strong>
   </div>
 {% endif %}
-<section class="card">
-  <div class="kpi">
+<section class="card" style="margin-bottom:16px;">
+  <div class="kpi" style="grid-template-columns:repeat(5,1fr);">
     <div class="metric"><span class="muted">Total do mês</span><strong>{{ summary.total_brl }}</strong></div>
-    <div class="metric"><span class="muted">Lançamentos</span><strong>{{ summary.expense_count }}</strong></div>
-    <div class="metric"><span class="muted">Total da semana</span><strong>{{ weekly.total_brl }}</strong></div>
+    <div class="metric"><span class="muted">Total semana</span><strong>{{ weekly.total_brl }}</strong></div>
+    <div class="metric"><span class="muted">Normais</span><strong>{{ cents_to_brl(summary.expense_type_totals.normal or 0) }}</strong></div>
+    <div class="metric"><span class="muted">Recorrentes</span><strong>{{ cents_to_brl(summary.expense_type_totals.recurring or 0) }}</strong></div>
+    <div class="metric"><span class="muted">Cartão (parcelas)</span><strong>{{ cents_to_brl(summary.expense_type_totals.card_installment or 0) }}</strong></div>
   </div>
+</section>
 
+<section class="card" style="margin-bottom:16px;">
+  <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
+    <button class="btn-sm filter-btn" data-filter="all">Todos</button>
+    <button class="btn-sm filter-btn" data-filter="normal">Normais</button>
+    <button class="btn-sm filter-btn" data-filter="recurring">Recorrentes</button>
+    <button class="btn-sm filter-btn" data-filter="card_installment">Cartão</button>
+  </div>
+  <div style="display:grid;grid-template-columns:1.2fr 1fr;gap:16px;">
+    <div>
+      <h3 style="margin-top:0;">Evolução diária do mês</h3>
+      <canvas id="daily-line-chart" height="180"></canvas>
+    </div>
+    <div>
+      <h3 style="margin-top:0;">Composição por tipo</h3>
+      <canvas id="type-doughnut-chart" height="180"></canvas>
+    </div>
+  </div>
+</section>
+
+<section class="card" style="margin-bottom:16px;">
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+    <div class="callout">
+      <strong>Cartão de crédito (parcelas do mês)</strong>
+      <p class="muted" style="margin:8px 0;">{{ summary.installment_snapshot.count }} parcela(s), total {{ summary.installment_snapshot.total_brl }}</p>
+      <ul>
+        {% for item in summary.installment_snapshot.groups[:6] %}
+          <li>{{ item.description }} — {{ item.amount_brl }} ({{ item.current_index }}/{{ item.installment_total }})</li>
+        {% else %}
+          <li class="muted">Sem parcelas neste mês.</li>
+        {% endfor %}
+      </ul>
+    </div>
+    <div class="callout">
+      <strong>Recorrentes no mês</strong>
+      <p class="muted" style="margin:8px 0;">{{ summary.recurring_snapshot.count }} lançamento(s), total {{ summary.recurring_snapshot.total_brl }}</p>
+      <p class="muted">Use esse bloco para avaliar impacto fixo no orçamento mensal.</p>
+    </div>
+  </div>
+</section>
+
+<section class="card">
   {% if summary.insights %}
     <div class="callout">
       <strong>Leitura rápida</strong>
@@ -67,14 +111,14 @@
     <tbody>
       {% if summary.recent_expenses %}
         {% for item in summary.recent_expenses %}
-          <tr id="expense-row-{{ item.id }}">
+          <tr id="expense-row-{{ item.id }}" data-kind="{{ item.expense_kind or ('recurring' if item.source_type == 'recurring' else 'normal') }}">
             <td>{{ item.expense_date }}</td>
             <td>{{ item.description }}</td>
             <td>{{ item.category_label }}</td>
             <td>{{ cents_to_brl(item.amount_cents) }}</td>
             <td style="white-space:nowrap">
-              <button class="btn-sm" onclick="openEdit({{ item.id }}, {{ item.description | tojson }}, {{ item.category | tojson }}, {{ item.amount_cents }}, {{ item.expense_date | tojson }})">Editar</button>
-              <button class="btn-sm btn-danger" onclick="deleteExpense({{ item.id }}, this)">Excluir</button>
+              <button class="btn-sm" onclick="openEdit({{ item.id }}, {{ item.description | tojson }}, {{ item.category | tojson }}, {{ item.amount_cents }}, {{ item.expense_date | tojson }}, {{ (item.installment_group_id is not none) | tojson }})">Editar</button>
+              <button class="btn-sm btn-danger" onclick="deleteExpense({{ item.id }}, this, {{ (item.installment_group_id is not none) | tojson }})">Excluir</button>
             </td>
           </tr>
         {% endfor %}
@@ -133,6 +177,10 @@
     <label>Data
       <input type="date" name="expense_date" required>
     </label>
+    <label id="apply-series-label" style="display:none;">
+      <input type="checkbox" name="apply_to_series">
+      Aplicar para toda a compra parcelada
+    </label>
     <div class="modal-actions">
       <button type="submit">Salvar</button>
       <button type="button" onclick="document.getElementById('edit-modal').close()">Cancelar</button>
@@ -153,7 +201,7 @@
     host.appendChild(box);
   }
 
-  function openEdit(id, description, category, amountCents, expenseDate) {
+  function openEdit(id, description, category, amountCents, expenseDate, isInstallment) {
     const form = document.getElementById("edit-form");
     form.dataset.expenseId = id;
     form.querySelector("[name=description]").value = description;
@@ -163,6 +211,9 @@
     }
     form.querySelector("[name=amount_brl]").value = (amountCents / 100).toFixed(2);
     form.querySelector("[name=expense_date]").value = expenseDate;
+    const applySeries = document.getElementById("apply-series-label");
+    applySeries.style.display = isInstallment ? "block" : "none";
+    form.querySelector("[name=apply_to_series]").checked = false;
     document.getElementById("edit-modal").showModal();
   }
 
@@ -188,14 +239,18 @@
     }
   });
 
-  async function deleteExpense(id, btn) {
+  async function deleteExpense(id, btn, isInstallment) {
     if (!confirm("Excluir este gasto?")) return;
     const row = document.getElementById("expense-row-" + id);
     try {
-      const res = await fetch("/api/expenses/" + id + "/delete", { method: "POST" });
+      const formData = new FormData();
+      if (isInstallment && confirm("Deseja excluir a série inteira de parcelas?")) {
+        formData.append("apply_to_series", "1");
+      }
+      const res = await fetch("/api/expenses/" + id + "/delete", { method: "POST", body: formData });
       const data = await res.json();
       if (data.ok) {
-        row.remove();
+        window.location.reload();
       } else {
         showFeedback(data.error || "Erro ao excluir.", true);
       }
@@ -232,7 +287,45 @@
       </div>`
     ).join("");
   }
+
+  function renderDailyLine() {
+    const el = document.getElementById("daily-line-chart");
+    if (!el || typeof Chart === "undefined") return;
+    const series = {{ summary.daily_series | tojson }};
+    new Chart(el, {
+      type: "line",
+      data: {
+        labels: series.map(s => s.date),
+        datasets: [{ label: "Total diário", data: series.map(s => s.total_cents / 100), borderColor: "#147d64", tension: 0.25 }]
+      },
+      options: { responsive: true, plugins: { legend: { display: false } } }
+    });
+  }
+
+  function renderTypeDoughnut() {
+    const el = document.getElementById("type-doughnut-chart");
+    if (!el || typeof Chart === "undefined") return;
+    const t = {{ summary.expense_type_totals | tojson }};
+    new Chart(el, {
+      type: "doughnut",
+      data: {
+        labels: ["Normais", "Recorrentes", "Cartão"],
+        datasets: [{ data: [(t.normal || 0)/100, (t.recurring || 0)/100, (t.card_installment || 0)/100], backgroundColor: ["#1e90ff", "#147d64", "#f39c12"] }]
+      },
+      options: { responsive: true }
+    });
+  }
+
+  document.querySelectorAll(".filter-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const kind = btn.dataset.filter;
+      document.querySelectorAll("[id^='expense-row-']").forEach(row => {
+        if (kind === "all" || row.dataset.kind === kind) row.style.display = "";
+        else row.style.display = "none";
+      });
+    });
+  });
 </script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-<script>renderCategoryPie();</script>
+<script>renderCategoryPie(); renderDailyLine(); renderTypeDoughnut();</script>
 {% endblock %}

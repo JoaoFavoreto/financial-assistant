@@ -3,6 +3,7 @@
 import difflib
 import json
 import re
+import uuid
 from datetime import date, timedelta
 from decimal import InvalidOperation
 
@@ -111,8 +112,12 @@ class ExpenseService:
         with get_connection() as connection:
             cursor = connection.execute(
                 """
-                INSERT INTO expenses (description, category, amount_cents, expense_date, source_type, user_id)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO expenses (
+                    description, category, amount_cents, expense_date, source_type, user_id,
+                    expense_kind, installment_group_id, installment_index, installment_total,
+                    installment_purchase_total_cents, card_label
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     expense.description,
@@ -121,6 +126,12 @@ class ExpenseService:
                     expense.expense_date.isoformat(),
                     expense.source_type,
                     user_id,
+                    "normal",
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
                 ),
             )
             connection.commit()
@@ -132,8 +143,12 @@ class ExpenseService:
             for expense in expenses:
                 cursor = connection.execute(
                     """
-                    INSERT INTO expenses (description, category, amount_cents, expense_date, source_type, user_id)
-                    VALUES (?, ?, ?, ?, ?, ?)
+                    INSERT INTO expenses (
+                        description, category, amount_cents, expense_date, source_type, user_id,
+                        expense_kind, installment_group_id, installment_index, installment_total,
+                        installment_purchase_total_cents, card_label
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         expense.description,
@@ -142,6 +157,57 @@ class ExpenseService:
                         expense.expense_date.isoformat(),
                         expense.source_type,
                         user_id,
+                        "normal",
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                    ),
+                )
+                ids.append(int(cursor.lastrowid))
+            connection.commit()
+        return ids
+
+    def create_card_installment_purchase(
+        self,
+        *,
+        user_id: int,
+        description: str,
+        category: str,
+        installment_amount_cents: int,
+        installment_total: int,
+        purchase_total_cents: int,
+        first_expense_date: date,
+        card_label: str | None = None,
+    ) -> list[int]:
+        group_id = str(uuid.uuid4())
+        ids: list[int] = []
+        with get_connection() as connection:
+            for idx in range(installment_total):
+                installment_date = _add_months(first_expense_date, idx)
+                cursor = connection.execute(
+                    """
+                    INSERT INTO expenses (
+                        description, category, amount_cents, expense_date, source_type, user_id,
+                        expense_kind, installment_group_id, installment_index, installment_total,
+                        installment_purchase_total_cents, card_label
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        description,
+                        category,
+                        installment_amount_cents,
+                        installment_date.isoformat(),
+                        "text",
+                        user_id,
+                        "card_installment",
+                        group_id,
+                        idx + 1,
+                        installment_total,
+                        purchase_total_cents,
+                        card_label,
                     ),
                 )
                 ids.append(int(cursor.lastrowid))
@@ -159,7 +225,8 @@ class ExpenseService:
             if user_id is not None:
                 rows = connection.execute(
                     """
-                    SELECT id, description, category, amount_cents, expense_date, source_type, created_at
+                    SELECT id, description, category, amount_cents, expense_date, source_type, created_at, expense_kind,
+                           installment_group_id, installment_index, installment_total, installment_purchase_total_cents, card_label
                     FROM expenses
                     WHERE expense_date >= ? AND expense_date < ? AND user_id = ?
                     ORDER BY expense_date DESC, id DESC
@@ -169,7 +236,8 @@ class ExpenseService:
             else:
                 rows = connection.execute(
                     """
-                    SELECT id, description, category, amount_cents, expense_date, source_type, created_at
+                    SELECT id, description, category, amount_cents, expense_date, source_type, created_at, expense_kind,
+                           installment_group_id, installment_index, installment_total, installment_purchase_total_cents, card_label
                     FROM expenses
                     WHERE expense_date >= ? AND expense_date < ?
                     ORDER BY expense_date DESC, id DESC
@@ -290,7 +358,8 @@ class ExpenseService:
         with get_connection() as connection:
             rows = connection.execute(
                 """
-                SELECT id, description, category, amount_cents, expense_date, source_type, created_at
+                SELECT id, description, category, amount_cents, expense_date, source_type, created_at, expense_kind,
+                       installment_group_id, installment_index, installment_total, installment_purchase_total_cents, card_label
                 FROM expenses
                 WHERE user_id = ? AND expense_date >= ?
                 ORDER BY expense_date DESC, id DESC
@@ -339,7 +408,9 @@ class ExpenseService:
         limit: int | None = None,
     ) -> list[dict]:
         query = """
-            SELECT id, description, category, amount_cents, expense_date, source_type
+            SELECT id, description, category, amount_cents, expense_date, source_type,
+                   expense_kind, installment_group_id, installment_index, installment_total,
+                   installment_purchase_total_cents, card_label
             FROM expenses
             WHERE user_id = ? AND expense_date >= ? AND expense_date < ?
         """
@@ -363,7 +434,8 @@ class ExpenseService:
         with get_connection() as connection:
             rows = connection.execute(
                 """
-                SELECT id, description, category, amount_cents, expense_date
+                SELECT id, description, category, amount_cents, expense_date, expense_kind,
+                       installment_group_id, installment_index, installment_total
                 FROM expenses
                 WHERE user_id = ? AND expense_date >= ?
                 ORDER BY expense_date DESC, id DESC
@@ -376,7 +448,11 @@ class ExpenseService:
     def delete_expense(self, user_id: int, expense_id: int) -> dict:
         with get_connection() as connection:
             row = connection.execute(
-                "SELECT id, description, category, amount_cents, expense_date FROM expenses WHERE id = ? AND user_id = ?",
+                """
+                SELECT id, description, category, amount_cents, expense_date, expense_kind,
+                       installment_group_id, installment_index, installment_total
+                FROM expenses WHERE id = ? AND user_id = ?
+                """,
                 (expense_id, user_id),
             ).fetchone()
             if not row:
@@ -384,6 +460,30 @@ class ExpenseService:
             connection.execute("DELETE FROM expenses WHERE id = ? AND user_id = ?", (expense_id, user_id))
             connection.commit()
         return dict(row)
+
+    def delete_installment_series(self, user_id: int, expense_id: int) -> int:
+        with get_connection() as connection:
+            row = connection.execute(
+                """
+                SELECT installment_group_id
+                FROM expenses
+                WHERE id = ? AND user_id = ?
+                """,
+                (expense_id, user_id),
+            ).fetchone()
+            if not row:
+                raise ValueError(f"Gasto {expense_id} não encontrado para este usuário.")
+            group_id = row["installment_group_id"]
+            if not group_id:
+                connection.execute("DELETE FROM expenses WHERE id = ? AND user_id = ?", (expense_id, user_id))
+                connection.commit()
+                return 1
+            deleted = connection.execute(
+                "DELETE FROM expenses WHERE installment_group_id = ? AND user_id = ?",
+                (group_id, user_id),
+            )
+            connection.commit()
+            return int(deleted.rowcount or 0)
 
     def update_expense(
         self,
@@ -394,10 +494,14 @@ class ExpenseService:
         category: str | None = None,
         description: str | None = None,
         expense_date: str | None = None,
+        apply_to_series: bool = False,
     ) -> dict:
         with get_connection() as connection:
             old = connection.execute(
-                "SELECT id, description, category, amount_cents, expense_date FROM expenses WHERE id = ? AND user_id = ?",
+                """
+                SELECT id, description, category, amount_cents, expense_date, expense_kind, installment_group_id
+                FROM expenses WHERE id = ? AND user_id = ?
+                """,
                 (expense_id, user_id),
             ).fetchone()
             if not old:
@@ -408,14 +512,24 @@ class ExpenseService:
             new_description = description if description is not None else old["description"]
             new_date = expense_date if expense_date is not None else old["expense_date"]
 
-            connection.execute(
-                """
-                UPDATE expenses
-                SET amount_cents = ?, category = ?, description = ?, expense_date = ?
-                WHERE id = ? AND user_id = ?
-                """,
-                (new_amount, new_category, new_description, new_date, expense_id, user_id),
-            )
+            if apply_to_series and old["installment_group_id"]:
+                connection.execute(
+                    """
+                    UPDATE expenses
+                    SET amount_cents = ?, category = ?, description = ?
+                    WHERE installment_group_id = ? AND user_id = ?
+                    """,
+                    (new_amount, new_category, new_description, old["installment_group_id"], user_id),
+                )
+            else:
+                connection.execute(
+                    """
+                    UPDATE expenses
+                    SET amount_cents = ?, category = ?, description = ?, expense_date = ?
+                    WHERE id = ? AND user_id = ?
+                    """,
+                    (new_amount, new_category, new_description, new_date, expense_id, user_id),
+                )
             connection.commit()
 
             updated = connection.execute(
@@ -708,3 +822,8 @@ class RecurringExpenseService:
             connection.commit()
 
 
+def _add_months(base: date, months: int) -> date:
+    year = base.year + (base.month - 1 + months) // 12
+    month = (base.month - 1 + months) % 12 + 1
+    day = min(base.day, 28)
+    return date(year, month, day)

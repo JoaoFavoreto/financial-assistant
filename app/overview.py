@@ -26,6 +26,11 @@ class OverviewService:
         summary["top_category"] = summary["categories"][0] if summary["categories"] else None
         summary["source_totals"] = _source_totals(raw_expenses)
         summary["source_counts"] = _source_counts(raw_expenses)
+        summary["expense_type_totals"] = _expense_type_totals(raw_expenses)
+        summary["expense_type_counts"] = _expense_type_counts(raw_expenses)
+        summary["daily_series"] = _daily_series(raw_expenses)
+        summary["installment_snapshot"] = _installment_snapshot(raw_expenses)
+        summary["recurring_snapshot"] = _recurring_snapshot(raw_expenses)
         summary["comparison"] = _build_comparison(
             summary["total_cents"],
             previous["total_cents"],
@@ -69,6 +74,8 @@ class OverviewService:
             month_summary["budgets"],
             categories=week_categories,
         )
+        summary["expense_type_totals"] = _expense_type_totals(current_expenses)
+        summary["expense_type_counts"] = _expense_type_counts(current_expenses)
         summary["insights"] = self._build_insights(summary, period_phrase="nesta semana")
         return summary
 
@@ -225,3 +232,74 @@ def _source_counts(expenses: list[dict]) -> dict[str, int]:
         source_type = expense.get("source_type") or "text"
         counts[source_type] = counts.get(source_type, 0) + 1
     return counts
+
+
+def _normalize_expense_type(expense: dict) -> str:
+    kind = (expense.get("expense_kind") or "").strip()
+    if kind:
+        return kind
+    if expense.get("source_type") == "recurring":
+        return "recurring"
+    return "normal"
+
+
+def _expense_type_totals(expenses: list[dict]) -> dict[str, int]:
+    totals: dict[str, int] = {"normal": 0, "recurring": 0, "card_installment": 0}
+    for expense in expenses:
+        etype = _normalize_expense_type(expense)
+        totals[etype] = totals.get(etype, 0) + expense["amount_cents"]
+    return totals
+
+
+def _expense_type_counts(expenses: list[dict]) -> dict[str, int]:
+    counts: dict[str, int] = {"normal": 0, "recurring": 0, "card_installment": 0}
+    for expense in expenses:
+        etype = _normalize_expense_type(expense)
+        counts[etype] = counts.get(etype, 0) + 1
+    return counts
+
+
+def _daily_series(expenses: list[dict]) -> list[dict]:
+    bucket: dict[str, int] = {}
+    for expense in expenses:
+        d = expense["expense_date"]
+        bucket[d] = bucket.get(d, 0) + expense["amount_cents"]
+    points = sorted(bucket.items(), key=lambda x: x[0])
+    return [{"date": d, "total_cents": cents, "total_brl": cents_to_brl(cents)} for d, cents in points]
+
+
+def _installment_snapshot(expenses: list[dict]) -> dict:
+    installments = [e for e in expenses if _normalize_expense_type(e) == "card_installment"]
+    total_cents = sum(e["amount_cents"] for e in installments)
+    by_group: dict[str, dict] = {}
+    for row in installments:
+        gid = row.get("installment_group_id") or f"single-{row['id']}"
+        by_group.setdefault(
+            gid,
+            {
+                "description": row["description"],
+                "category": row["category"],
+                "category_label": format_category(row["category"]),
+                "card_label": row.get("card_label") or "cartão",
+                "current_index": row.get("installment_index"),
+                "installment_total": row.get("installment_total"),
+                "amount_cents": row["amount_cents"],
+                "amount_brl": cents_to_brl(row["amount_cents"]),
+            },
+        )
+    return {
+        "count": len(installments),
+        "total_cents": total_cents,
+        "total_brl": cents_to_brl(total_cents),
+        "groups": list(by_group.values()),
+    }
+
+
+def _recurring_snapshot(expenses: list[dict]) -> dict:
+    recurrings = [e for e in expenses if _normalize_expense_type(e) == "recurring" or e.get("source_type") == "recurring"]
+    total_cents = sum(e["amount_cents"] for e in recurrings)
+    return {
+        "count": len(recurrings),
+        "total_cents": total_cents,
+        "total_brl": cents_to_brl(total_cents),
+    }

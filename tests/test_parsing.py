@@ -60,6 +60,12 @@ class LocalFallbackParsingTests(unittest.TestCase):
         self.assertEqual(parsed["intent"], "create_recurring_expense_many")
         self.assertEqual(len(parsed["recurring_expenses"]), 2)
 
+    def test_parse_card_installment_purchase(self) -> None:
+        parsed = parse_message("gastei 120,00 em 10x no cartão no curso")
+        self.assertEqual(parsed["intent"], "create_card_installment_purchase")
+        self.assertEqual(parsed["card_purchase"].installment_total, 10)
+        self.assertEqual(parsed["card_purchase"].installment_amount_cents, 12000)
+
 
 class BrlToCentsTests(unittest.TestCase):
     def test_decimal_dot(self) -> None:

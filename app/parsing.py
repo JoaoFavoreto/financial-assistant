@@ -68,6 +68,17 @@ class ParsedRecurring:
 
 
 @dataclass
+class ParsedCardInstallmentPurchase:
+    description: str
+    category: str
+    installment_amount_cents: int
+    installment_total: int
+    purchase_total_cents: int
+    first_expense_date: date
+    card_label: str | None = None
+
+
+@dataclass
 class LocalSearchFilter:
     category_hint: str | None = None
     description_hint: str | None = None
@@ -105,6 +116,10 @@ def parse_message(text: str) -> dict:
     canonical = canonicalize(text)
     if not normalized:
         return {"intent": "empty"}
+
+    card_purchase = parse_card_installment_purchase(normalized)
+    if card_purchase:
+        return {"intent": "create_card_installment_purchase", "card_purchase": card_purchase}
 
     budgets = parse_budgets(normalized)
     if budgets:
@@ -175,7 +190,7 @@ def parse_recurring_expenses(normalized_text: str) -> list[ParsedRecurring]:
     if not any(t in normalized_text for t in recurring_triggers):
         return []
 
-    chunks = re.split(r"\s+e\s+", normalized_text)
+    chunks = [c.strip(" ,;") for c in re.split(r"\s+e\s+", normalized_text) if c.strip(" ,;")]
     results: list[ParsedRecurring] = []
     for chunk in chunks:
         amount_match = re.search(r"(\d+[\d.,]*)", chunk)
@@ -205,6 +220,10 @@ def parse_recurring_expenses(normalized_text: str) -> list[ParsedRecurring]:
                     day = val
                     break
         description = build_description(chunk, amount_match.group(1), detect_category(chunk))
+        if not description or description.startswith("gasto em "):
+            tokens = re.sub(r"\b(todo mes|todo mês|mensal|toda semana|semanal|dia \d{1,2})\b", " ", chunk, flags=re.IGNORECASE)
+            tokens = re.sub(r"\b(\d+[\d.,]*)\b", " ", tokens)
+            description = " ".join(tokens.split()).strip(" -.,") or "gasto recorrente"
         results.append(
             ParsedRecurring(
                 description=description,
@@ -215,6 +234,39 @@ def parse_recurring_expenses(normalized_text: str) -> list[ParsedRecurring]:
             )
         )
     return results
+
+
+def parse_card_installment_purchase(normalized_text: str) -> ParsedCardInstallmentPurchase | None:
+    if "cartao" not in normalized_text and "cartão" not in normalized_text:
+        return None
+    match = re.search(
+        r"(?P<amount>[\d.,]+)\s*(?:em\s*)?(?P<n>\d{1,2})\s*x\b",
+        normalized_text,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return None
+    installments = int(match.group("n"))
+    if installments < 2 or installments > 36:
+        return None
+    installment_amount = parse_brl_to_cents(match.group("amount"))
+    purchase_total = installment_amount * installments
+    category = detect_category(normalized_text)
+    first_date = detect_date(normalized_text)
+    description = build_description(normalized_text, match.group("amount"), category)
+    description = re.sub(r"\b(em\s*)?\d{1,2}\s*x\b", "", description, flags=re.IGNORECASE).strip(" -.,") or "compra no cartao"
+    card_label = "cartao credito"
+    if "nubank" in canonicalize(normalized_text):
+        card_label = "nubank"
+    return ParsedCardInstallmentPurchase(
+        description=description,
+        category=category,
+        installment_amount_cents=installment_amount,
+        installment_total=installments,
+        purchase_total_cents=purchase_total,
+        first_expense_date=first_date,
+        card_label=card_label,
+    )
 
 
 def _looks_like_expense_entry(normalized_text: str) -> bool:

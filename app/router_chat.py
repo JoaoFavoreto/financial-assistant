@@ -1,7 +1,7 @@
 ﻿from __future__ import annotations
 
 import logging
-from datetime import date
+from datetime import date, timedelta
 
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import JSONResponse, RedirectResponse
@@ -271,6 +271,34 @@ def _handle_intent(parsed: dict, user_id: int, request: Request) -> str:
             return reply_help("Não consegui criar os recorrentes informados.")
         return reply_recurring_created_many(created)
 
+    if intent == "create_card_installment_purchase":
+        card = parsed["card_purchase"]
+        try:
+            first_date = date.today()
+            raw_first = getattr(card, "first_expense_date", "today")
+            if raw_first not in {"today", "yesterday"}:
+                first_date = date.fromisoformat(raw_first)
+            elif raw_first == "yesterday":
+                first_date = date.today() - timedelta(days=1)
+            ids = ExpenseService().create_card_installment_purchase(
+                user_id=user_id,
+                description=card.description,
+                category=card.category.lower(),
+                installment_amount_cents=parse_money_to_cents(card.installment_amount_brl),
+                installment_total=card.installments,
+                purchase_total_cents=parse_money_to_cents(card.installment_amount_brl) * card.installments,
+                first_expense_date=first_date,
+                card_label=card.card_label,
+            )
+        except (ValueError, TypeError) as exc:
+            return reply_help(f"Não consegui criar o parcelamento no cartão: {exc}")
+        return (
+            f"Perfeito! Registrei compra no cartão em {card.installments}x.\n\n"
+            f"- {card.description} ({card.category})\n"
+            f"- Parcela mensal: {card.installment_amount_brl}\n"
+            f"- Total de lançamentos gerados: {len(ids)}"
+        )
+
     if intent == "list_recurring_expenses":
         recurrings = RecurringExpenseService().list_for_user(user_id)
         return reply_recurring_list(recurrings)
@@ -337,10 +365,14 @@ async def api_chat(
 @router.post("/api/expenses/{expense_id}/delete")
 async def api_expense_delete(
     expense_id: int,
+    apply_to_series: str | None = Form(None),
     user: dict = Depends(require_login),
 ) -> JSONResponse:
     try:
-        ExpenseService().delete_expense(user["user_id"], expense_id)
+        if apply_to_series:
+            ExpenseService().delete_installment_series(user["user_id"], expense_id)
+        else:
+            ExpenseService().delete_expense(user["user_id"], expense_id)
         return JSONResponse({"ok": True, "error": None, "details": None})
     except ValueError as exc:
         return JSONResponse({"ok": False, "error": str(exc), "details": None}, status_code=404)
@@ -354,6 +386,7 @@ async def api_expense_edit(
     category: str = Form(...),
     amount_brl: str = Form(...),
     expense_date: str = Form(...),
+    apply_to_series: str | None = Form(None),
 ) -> JSONResponse:
     if not description.strip():
         return JSONResponse({"ok": False, "error": "Descrição não pode ficar vazia.", "details": None}, status_code=422)
@@ -366,6 +399,7 @@ async def api_expense_edit(
             category=category.lower(),
             amount_cents=amount_cents,
             expense_date=expense_date,
+            apply_to_series=apply_to_series is not None,
         )
         return JSONResponse({"ok": True, "error": None, "details": {"expense": updated}})
     except ValueError as exc:

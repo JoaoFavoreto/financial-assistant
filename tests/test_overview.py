@@ -79,6 +79,31 @@ class OverviewTests(unittest.TestCase):
         self.assertEqual(overview["comparison"]["direction"], "up")
         self.assertIn("semana passada", overview["comparison"]["text"])
 
+    def test_monthly_overview_contains_expense_type_totals(self) -> None:
+        today = date.today()
+        self.expense_service.create_expense(
+            ParsedExpense(
+                description="mercado",
+                category="alimentacao",
+                amount_cents=5000,
+                expense_date=today,
+            ),
+            user_id=self.user_id,
+        )
+        self.expense_service.create_card_installment_purchase(
+            user_id=self.user_id,
+            description="tv",
+            category="compras",
+            installment_amount_cents=20000,
+            installment_total=3,
+            purchase_total_cents=60000,
+            first_expense_date=today,
+            card_label="visa",
+        )
+        overview = self.overview_service.get_monthly_overview(self.user_id, today.year, today.month)
+        self.assertIn("expense_type_totals", overview)
+        self.assertGreaterEqual(overview["expense_type_totals"]["card_installment"], 20000)
+
 
 if __name__ == "__main__":
     unittest.main()

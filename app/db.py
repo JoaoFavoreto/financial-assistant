@@ -231,6 +231,40 @@ def ensure_database(force: bool = False) -> None:
             else:
                 connection.execute("UPDATE schema_version SET version = 5")
             connection.commit()
+            version = 5
+
+        if version < 6:
+            for stmt in (
+                "ALTER TABLE expenses ADD COLUMN expense_kind TEXT NOT NULL DEFAULT 'normal'",
+                "ALTER TABLE expenses ADD COLUMN installment_group_id TEXT",
+                "ALTER TABLE expenses ADD COLUMN installment_index INTEGER",
+                "ALTER TABLE expenses ADD COLUMN installment_total INTEGER",
+                "ALTER TABLE expenses ADD COLUMN installment_purchase_total_cents INTEGER",
+                "ALTER TABLE expenses ADD COLUMN card_label TEXT",
+            ):
+                try:
+                    connection.execute(stmt)
+                except sqlite3.OperationalError:
+                    pass
+
+            connection.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_expenses_user_kind_date
+                ON expenses(user_id, expense_kind, expense_date)
+                """
+            )
+            connection.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_expenses_installment_group
+                ON expenses(installment_group_id)
+                """
+            )
+            existing = connection.execute("SELECT COUNT(*) FROM schema_version").fetchone()[0]
+            if existing == 0:
+                connection.execute("INSERT INTO schema_version (version) VALUES (6)")
+            else:
+                connection.execute("UPDATE schema_version SET version = 6")
+            connection.commit()
 
         _INITIALIZED_DB_PATH = current_db_path
     finally:
