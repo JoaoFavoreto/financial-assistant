@@ -1,15 +1,19 @@
 ﻿from __future__ import annotations
 
+import logging
 from datetime import date, timedelta
-from decimal import Decimal, ROUND_HALF_UP
 from typing import Literal
 
-from openai import OpenAI
+try:
+    from openai import OpenAI
+except ImportError:  # pragma: no cover
+    OpenAI = None  # type: ignore[assignment]
 from pydantic import BaseModel, Field
 
 from app.config import settings
-from app.parsing import ParsedBudget, ParsedExpense
+from app.parsing import ParsedBudget, ParsedExpense, parse_brl_to_cents
 from app.skills import finance_extraction_skill
+from app.token_usage import TokenLimitError, TokenUsageService
 
 
 class LLMExpense(BaseModel):
@@ -32,6 +36,11 @@ class LLMExpenseEdit(BaseModel):
     new_category: str | None = None
     new_description: str | None = None
     new_date: str | None = None
+
+
+class LLMBudgetItem(BaseModel):
+    category: str
+    amount_brl: str
 
 
 class LLMSearchFilter(BaseModel):
@@ -70,27 +79,119 @@ class LLMMessageInterpretation(BaseModel):
     expenses: list[LLMExpense] = []
     budget_category: str | None = None
     budget_amount_brl: str | None = None
+    budget_items: list[LLMBudgetItem] = []
     reply_hint: str | None = None
     expense_target: LLMExpenseTarget | None = None
     expense_edit: LLMExpenseEdit | None = None
     search_filter: LLMSearchFilter | None = None
     recurring_expense: LLMRecurringExpense | None = None
+    recurring_expenses: list[LLMRecurringExpense] = []
     recurring_target: str | None = None  # hint para delete
 
 
 HISTORY_CONTEXT_WINDOW = 10
+logger = logging.getLogger(__name__)
+
+
+class _BatchCategoryItem(BaseModel):
+    index: int
+    category: str  # key from user's categories
+
+
+class _BatchCategorizationResponse(BaseModel):
+    items: list[_BatchCategoryItem]
 
 
 class OpenAIInterpreter:
     def __init__(self) -> None:
+        if OpenAI is None:
+            raise RuntimeError("Pacote 'openai' não instalado no ambiente.")
         self.client = OpenAI(api_key=settings.openai_api_key, timeout=settings.economia_llm_timeout)
-        self.model = settings.openai_model
+        self.simple_model = settings.openai_model_simple
+        self.complex_model = settings.openai_model_complex
+        self.token_usage = TokenUsageService()
+
+    @staticmethod
+    def _extract_usage(response: object) -> tuple[int, int, int]:
+        usage = getattr(response, "usage", None)
+        if usage is None:
+            return (0, 0, 0)
+        prompt = int(getattr(usage, "input_tokens", 0) or 0)
+        completion = int(getattr(usage, "output_tokens", 0) or 0)
+        total = int(getattr(usage, "total_tokens", prompt + completion) or 0)
+        return (prompt, completion, total)
+
+    def categorize_batch(
+        self,
+        items: list[tuple[int, str]],
+        user_id: int | None = None,
+    ) -> dict[int, str]:
+        """
+        Categorize a batch of expense descriptions.
+        items: list of (original_index, description)
+        Returns: dict of original_index → category_key
+        """
+        from app.skills import finance_extraction_skill
+
+        if not items:
+            return {}
+
+        lines = "\n".join(f"{idx}. {desc}" for idx, desc in items)
+        prompt = (
+            "Categorize each expense description below using only the category keys "
+            "available in the system prompt. Return JSON with an 'items' array where "
+            "each element has 'index' (int) and 'category' (string key).\n\n"
+            f"{lines}"
+        )
+        try:
+            self.token_usage.check_limits(user_id, requested_tokens=300)
+        except TokenLimitError as exc:
+            self.token_usage.log_usage(
+                user_id=user_id,
+                route="/import/upload",
+                task_type="categorize_batch",
+                model=self.simple_model,
+                prompt_tokens=0,
+                completion_tokens=0,
+                total_tokens=0,
+                status="blocked",
+                error_message=str(exc),
+            )
+            raise
+        response = self.client.responses.parse(
+            model=self.simple_model,
+            input=[
+                {"role": "system", "content": finance_extraction_skill(user_id=user_id)},
+                {"role": "user", "content": prompt},
+            ],
+            text_format=_BatchCategorizationResponse,
+        )
+        prompt_t, completion_t, total_t = self._extract_usage(response)
+        self.token_usage.log_usage(
+            user_id=user_id,
+            route="/import/upload",
+            task_type="categorize_batch",
+            model=self.simple_model,
+            prompt_tokens=prompt_t,
+            completion_tokens=completion_t,
+            total_tokens=total_t,
+            status="allowed",
+        )
+        suggestions = {item.index: item.category.lower() for item in response.output_parsed.items}
+        if user_id is not None:
+            from app.services import CategoryService
+
+            allowed = {c["key"] for c in CategoryService().list_for_user(user_id)}
+            if allowed:
+                suggestions = {idx: cat for idx, cat in suggestions.items() if cat in allowed}
+        return suggestions
 
     def parse_message(
         self,
         message: str,
         user_id: int | None = None,
         history: list[dict] | None = None,
+        route: str = "/api/chat",
     ) -> dict:
         messages: list[dict] = [
             {"role": "system", "content": finance_extraction_skill(user_id=user_id)},
@@ -100,10 +201,52 @@ class OpenAIInterpreter:
                 messages.append({"role": turn["role"], "content": turn["content"]})
         messages.append({"role": "user", "content": message})
 
-        response = self.client.responses.parse(
-            model=self.model,
-            input=messages,
-            text_format=LLMMessageInterpretation,
+        try:
+            self.token_usage.check_limits(user_id, requested_tokens=500)
+        except TokenLimitError as exc:
+            self.token_usage.log_usage(
+                user_id=user_id,
+                route=route,
+                task_type="parse_message",
+                model=self.complex_model,
+                prompt_tokens=0,
+                completion_tokens=0,
+                total_tokens=0,
+                status="blocked",
+                error_message=str(exc),
+            )
+            raise
+        try:
+            response = self.client.responses.parse(
+                model=self.complex_model,
+                input=messages,
+                text_format=LLMMessageInterpretation,
+            )
+        except TokenLimitError:
+            raise
+        except Exception as exc:
+            self.token_usage.log_usage(
+                user_id=user_id,
+                route=route,
+                task_type="parse_message",
+                model=self.complex_model,
+                prompt_tokens=0,
+                completion_tokens=0,
+                total_tokens=0,
+                status="error",
+                error_message=str(exc),
+            )
+            raise
+        prompt_t, completion_t, total_t = self._extract_usage(response)
+        self.token_usage.log_usage(
+            user_id=user_id,
+            route=route,
+            task_type="parse_message",
+            model=self.complex_model,
+            prompt_tokens=prompt_t,
+            completion_tokens=completion_t,
+            total_tokens=total_t,
+            status="allowed",
         )
         return interpretation_to_result(response.output_parsed)
 
@@ -116,6 +259,14 @@ def interpretation_to_result(payload: LLMMessageInterpretation) -> dict:
         return result
 
     if payload.intent == "set_budget":
+        if payload.budget_items:
+            return {
+                "intent": "set_budget_many",
+                "budgets": [
+                    ParsedBudget(category=item.category.lower(), amount_cents=brl_to_cents(item.amount_brl))
+                    for item in payload.budget_items
+                ],
+            }
         if not payload.budget_category or not payload.budget_amount_brl:
             return {"intent": "help", "reply_hint": "Não consegui identificar categoria e valor do orçamento."}
         return {
@@ -153,6 +304,11 @@ def interpretation_to_result(payload: LLMMessageInterpretation) -> dict:
         }
 
     if payload.intent == "create_recurring_expense":
+        if payload.recurring_expenses:
+            return {
+                "intent": "create_recurring_expense_many",
+                "recurring_expenses": payload.recurring_expenses,
+            }
         rec = payload.recurring_expense
         if not rec:
             return {"intent": "help", "reply_hint": "Não consegui identificar os dados do gasto recorrente."}
@@ -193,4 +349,8 @@ def _build_expense(item: LLMExpense) -> ParsedExpense:
 
 
 def brl_to_cents(raw_value: str) -> int:
-    return int((Decimal(raw_value) * 100).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+    try:
+        return parse_brl_to_cents(raw_value)
+    except ValueError as exc:
+        logger.info("Valor BRL inválido retornado no fluxo LLM: %s", raw_value)
+        raise exc

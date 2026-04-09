@@ -53,6 +53,11 @@
       text-decoration: none;
       font-weight: bold;
     }
+    nav a.nav-active {
+      color: var(--accent);
+      border-bottom: 2px solid var(--accent);
+      padding-bottom: 2px;
+    }
     nav form { display: inline; margin-left: 16px; }
     nav button {
       background: none;
@@ -183,6 +188,36 @@
       flex: 1;
       padding: 8px 12px;
     }
+    .btn-sm {
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: none;
+      color: var(--ink);
+      padding: 4px 8px;
+      font-size: 0.82rem;
+      cursor: pointer;
+    }
+    .btn-sm:hover { background: var(--accent-soft); }
+    .btn-sm.btn-danger { color: var(--danger); }
+    .btn-sm.btn-danger:hover { background: #fde8e8; }
+    dialog {
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      padding: 28px;
+      max-width: 420px;
+      width: 100%;
+      box-shadow: 0 14px 40px rgba(54,49,40,0.15);
+    }
+    dialog::backdrop { background: rgba(31,42,42,0.4); }
+    dialog h3 { margin: 0 0 18px; }
+    dialog label { display: block; margin-bottom: 12px; font-size: 0.9rem; color: var(--muted); }
+    dialog label input, dialog label select { display: block; margin-top: 4px; width: 100%; }
+    .modal-actions { display: flex; gap: 10px; margin-top: 18px; }
+    .modal-actions button { flex: 1; }
+    .chat-input-row { display: flex; gap: 8px; margin-top: 16px; }
+    .chat-input-row input { flex: 1; border-radius: 999px; padding: 12px 18px; border: 1px solid var(--line); font: inherit; background: white; }
+    .chat-input-row button { border-radius: 999px; }
+    .loading-dot { opacity: 0.4; font-style: italic; }
     @media (max-width: 900px) {
       .grid { grid-template-columns: 1fr; }
       .kpi { grid-template-columns: 1fr; }

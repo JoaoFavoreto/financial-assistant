@@ -9,9 +9,10 @@ from fastapi.templating import Jinja2Templates
 
 from app.auth import get_user_by_id, mark_onboarded
 from app.config import settings
+from app.default_categories import DEFAULT_ONBOARDING_CATEGORIES
 from app.dependencies import require_login
 from app.overview import OverviewService
-from app.services import BudgetService, CategoryService, ChatHistoryService, RecurringExpenseService, cents_to_brl
+from app.services import BudgetService, CategoryService, ChatHistoryService, RecurringExpenseService, cents_to_brl, format_category
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
@@ -19,18 +20,6 @@ templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 router = APIRouter()
 
 MAX_HISTORY = 20
-
-# Default onboarding categories
-DEFAULT_ONBOARDING_CATEGORIES = [
-    {"key": "alimentacao", "label": "Alimentação", "examples": ["mercado", "restaurante", "ifood", "lanche"], "sort_order": 0},
-    {"key": "transporte", "label": "Transporte", "examples": ["uber", "gasolina", "onibus", "metro"], "sort_order": 1},
-    {"key": "moradia", "label": "Moradia", "examples": ["aluguel", "condominio", "energia", "internet"], "sort_order": 2},
-    {"key": "saude", "label": "Saúde", "examples": ["farmacia", "medico", "academia", "remedio"], "sort_order": 3},
-    {"key": "lazer", "label": "Lazer", "examples": ["cinema", "bar", "netflix", "spotify"], "sort_order": 4},
-    {"key": "compras", "label": "Compras", "examples": ["roupa", "amazon", "shopping"], "sort_order": 5},
-    {"key": "educacao", "label": "Educação", "examples": ["curso", "livro", "faculdade"], "sort_order": 6},
-    {"key": "outros", "label": "Outros", "examples": [], "sort_order": 7},
-]
 
 
 @router.get("/", response_class=HTMLResponse)
@@ -46,6 +35,7 @@ async def home(request: Request, user: dict = Depends(require_login)) -> HTMLRes
     chat_history = ChatHistoryService().load_recent(user_id, limit=MAX_HISTORY)
     recurring_expenses = recurring_svc.list_for_user(user_id)
     return templates.TemplateResponse(
+        request,
         "index.html",
         {
             "request": request,
@@ -65,10 +55,16 @@ async def home(request: Request, user: dict = Depends(require_login)) -> HTMLRes
 @router.get("/dashboard", response_class=HTMLResponse)
 async def dashboard(request: Request, user: dict = Depends(require_login)) -> HTMLResponse:
     today = date.today()
+    user_id = user["user_id"]
     overview_service = OverviewService()
-    summary = overview_service.get_monthly_overview(user["user_id"], today.year, today.month)
-    weekly = overview_service.get_weekly_overview(user["user_id"], anchor_date=today)
+    summary = overview_service.get_monthly_overview(user_id, today.year, today.month)
+    weekly = overview_service.get_weekly_overview(user_id, anchor_date=today)
+    user_categories = CategoryService().list_for_user(user_id)
+    for expense in summary.get("recent_expenses", []):
+        expense["category_label"] = format_category(expense["category"], user_id)
+    import_success = request.session.pop("import_success", None)
     return templates.TemplateResponse(
+        request,
         "dashboard.html",
         {
             "request": request,
@@ -76,6 +72,8 @@ async def dashboard(request: Request, user: dict = Depends(require_login)) -> HT
             "summary": summary,
             "weekly": weekly,
             "cents_to_brl": cents_to_brl,
+            "user_categories": user_categories,
+            "import_success": import_success,
         },
     )
 
@@ -86,6 +84,7 @@ async def onboarding_welcome(request: Request, user: dict = Depends(require_logi
     if user_data and user_data["onboarded"]:
         return RedirectResponse("/", status_code=303)
     return templates.TemplateResponse(
+        request,
         "onboarding_welcome.html",
         {"request": request, "user": user},
     )
@@ -94,6 +93,7 @@ async def onboarding_welcome(request: Request, user: dict = Depends(require_logi
 @router.get("/onboarding/categories", response_class=HTMLResponse)
 async def onboarding_categories_page(request: Request, user: dict = Depends(require_login)) -> HTMLResponse:
     return templates.TemplateResponse(
+        request,
         "onboarding.html",
         {
             "request": request,

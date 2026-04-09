@@ -59,6 +59,15 @@ class ParsedBudget:
 
 
 @dataclass
+class ParsedRecurring:
+    description: str
+    category: str
+    amount_cents: int
+    frequency: str
+    day: int
+
+
+@dataclass
 class LocalSearchFilter:
     category_hint: str | None = None
     description_hint: str | None = None
@@ -96,6 +105,18 @@ def parse_message(text: str) -> dict:
     canonical = canonicalize(text)
     if not normalized:
         return {"intent": "empty"}
+
+    budgets = parse_budgets(normalized)
+    if budgets:
+        if len(budgets) == 1:
+            return {"intent": "set_budget", "budget": budgets[0]}
+        return {"intent": "set_budget_many", "budgets": budgets}
+
+    recurrings = parse_recurring_expenses(normalized)
+    if recurrings:
+        if len(recurrings) == 1:
+            return {"intent": "create_recurring_expense", "recurring_expense": recurrings[0]}
+        return {"intent": "create_recurring_expense_many", "recurring_expenses": recurrings}
 
     budget = parse_budget(normalized)
     if budget:
@@ -136,6 +157,64 @@ def parse_budget(normalized_text: str) -> ParsedBudget | None:
         category=normalize_category(match.group(1)),
         amount_cents=parse_brl_to_cents(match.group(2)),
     )
+
+
+def parse_budgets(normalized_text: str) -> list[ParsedBudget]:
+    pattern = r"(?:orcamento|orçamento)\s+([a-zA-Z\u00c0-\u017f_]+)\s+([\d.,]+)"
+    matches = list(re.finditer(pattern, normalized_text))
+    if not matches:
+        return []
+    return [
+        ParsedBudget(category=normalize_category(m.group(1)), amount_cents=parse_brl_to_cents(m.group(2)))
+        for m in matches
+    ]
+
+
+def parse_recurring_expenses(normalized_text: str) -> list[ParsedRecurring]:
+    recurring_triggers = ("todo mes", "todo mês", "mensal", "toda semana", "semanal")
+    if not any(t in normalized_text for t in recurring_triggers):
+        return []
+
+    chunks = re.split(r"\s+e\s+", normalized_text)
+    results: list[ParsedRecurring] = []
+    for chunk in chunks:
+        amount_match = re.search(r"(\d+[\d.,]*)", chunk)
+        if not amount_match:
+            continue
+        amount_cents = parse_brl_to_cents(amount_match.group(1))
+        frequency = "weekly" if ("semana" in chunk or "semanal" in chunk) else "monthly"
+        if frequency == "monthly":
+            day_match = re.search(r"(?:dia\s+)?(\d{1,2})", chunk)
+            day = int(day_match.group(1)) if day_match else 1
+            day = min(max(day, 1), 28)
+        else:
+            weekday_map = {
+                "segunda": 0,
+                "terca": 1,
+                "terça": 1,
+                "quarta": 2,
+                "quinta": 3,
+                "sexta": 4,
+                "sabado": 5,
+                "sábado": 5,
+                "domingo": 6,
+            }
+            day = 0
+            for key, val in weekday_map.items():
+                if key in chunk:
+                    day = val
+                    break
+        description = build_description(chunk, amount_match.group(1), detect_category(chunk))
+        results.append(
+            ParsedRecurring(
+                description=description,
+                category=detect_category(chunk),
+                amount_cents=amount_cents,
+                frequency=frequency,
+                day=day,
+            )
+        )
+    return results
 
 
 def _looks_like_expense_entry(normalized_text: str) -> bool:

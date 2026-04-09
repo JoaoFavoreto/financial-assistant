@@ -3,6 +3,7 @@ import unittest
 
 from app.llm import LLMExpense, LLMMessageInterpretation, brl_to_cents, interpretation_to_result
 from app.parsing import parse_brl_to_cents, parse_message
+from app.services import parse_money_to_cents
 
 
 class ParseBrlToCentsTests(unittest.TestCase):
@@ -49,6 +50,16 @@ class LocalFallbackParsingTests(unittest.TestCase):
         self.assertEqual(parsed["search_filter"].limit, 5)
         self.assertEqual(parsed["search_filter"].period, "last_N_days:30")
 
+    def test_parse_multiple_budgets_same_message(self) -> None:
+        parsed = parse_message("orçamento alimentação 1200 e orçamento transporte 500")
+        self.assertEqual(parsed["intent"], "set_budget_many")
+        self.assertEqual(len(parsed["budgets"]), 2)
+
+    def test_parse_multiple_recurrings_same_message(self) -> None:
+        parsed = parse_message("netflix 39,90 mensal e academia 120 todo mês dia 10")
+        self.assertEqual(parsed["intent"], "create_recurring_expense_many")
+        self.assertEqual(len(parsed["recurring_expenses"]), 2)
+
 
 class BrlToCentsTests(unittest.TestCase):
     def test_decimal_dot(self) -> None:
@@ -59,6 +70,14 @@ class BrlToCentsTests(unittest.TestCase):
 
     def test_small_value(self) -> None:
         self.assertEqual(brl_to_cents("1.50"), 150)
+
+    def test_decimal_comma_supported(self) -> None:
+        self.assertEqual(brl_to_cents("1,50"), 150)
+
+
+class ServicesMoneyParseTests(unittest.TestCase):
+    def test_parse_money_to_cents_uses_brazilian_format(self) -> None:
+        self.assertEqual(parse_money_to_cents("1.234,56"), 123456)
 
 
 class InterpretationToResultTests(unittest.TestCase):

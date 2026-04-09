@@ -4,9 +4,10 @@ import difflib
 import json
 import re
 from datetime import date, timedelta
+from decimal import InvalidOperation
 
 from app.db import get_connection
-from app.parsing import ParsedBudget, ParsedExpense
+from app.parsing import ParsedBudget, ParsedExpense, parse_brl_to_cents
 
 
 def resolve_period(period: str | None) -> tuple[str, str]:
@@ -80,6 +81,10 @@ def cents_to_brl(amount_cents: int) -> str:
     return f"R$ {value:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 
+def parse_money_to_cents(raw_value: str) -> int:
+    return parse_brl_to_cents(raw_value)
+
+
 def format_category(category: str, user_id: int | None = None) -> str:
     if user_id is not None:
         label = CategoryService().get_label(user_id, category)
@@ -122,9 +127,25 @@ class ExpenseService:
             return int(cursor.lastrowid)
 
     def create_expenses(self, expenses: list[ParsedExpense], user_id: int | None = None) -> list[int]:
-        ids = []
-        for expense in expenses:
-            ids.append(self.create_expense(expense, user_id=user_id))
+        ids: list[int] = []
+        with get_connection() as connection:
+            for expense in expenses:
+                cursor = connection.execute(
+                    """
+                    INSERT INTO expenses (description, category, amount_cents, expense_date, source_type, user_id)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        expense.description,
+                        expense.category,
+                        expense.amount_cents,
+                        expense.expense_date.isoformat(),
+                        expense.source_type,
+                        user_id,
+                    ),
+                )
+                ids.append(int(cursor.lastrowid))
+            connection.commit()
         return ids
 
     def list_expenses_for_month(self, year: int, month: int, user_id: int | None = None) -> list[dict]:
@@ -228,13 +249,12 @@ class ExpenseService:
 
             if target.amount_brl_hint:
                 try:
-                    from app.llm import brl_to_cents
-                    target_cents = brl_to_cents(target.amount_brl_hint)
+                    target_cents = parse_money_to_cents(target.amount_brl_hint)
                     if expense["amount_cents"] == target_cents:
                         score += 2.0
                     elif abs(expense["amount_cents"] - target_cents) <= target_cents * 0.05:
                         score += 1.0
-                except Exception:
+                except (ValueError, InvalidOperation):
                     pass
 
             if target.date_hint:
@@ -666,16 +686,21 @@ class RecurringExpenseService:
         return generated
 
     def _insert_and_update(self, rec: dict, user_id: int, expense_date: date, today: date) -> None:
-        from app.parsing import ParsedExpense
-        expense = ParsedExpense(
-            description=rec["description"],
-            category=rec["category"],
-            amount_cents=rec["amount_cents"],
-            expense_date=expense_date,
-            source_type="recurring",
-        )
-        ExpenseService().create_expense(expense, user_id=user_id)
         with get_connection() as connection:
+            connection.execute(
+                """
+                INSERT INTO expenses (description, category, amount_cents, expense_date, source_type, user_id)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    rec["description"],
+                    rec["category"],
+                    rec["amount_cents"],
+                    expense_date.isoformat(),
+                    "recurring",
+                    user_id,
+                ),
+            )
             connection.execute(
                 "UPDATE recurring_expenses SET last_generated = ? WHERE id = ?",
                 (today.isoformat(), rec["id"]),

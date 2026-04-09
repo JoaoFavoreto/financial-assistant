@@ -58,3 +58,7 @@ def mark_onboarded(user_id: int) -> None:
     with get_connection() as connection:
         connection.execute("UPDATE users SET onboarded = 1 WHERE id = ?", (user_id,))
         connection.commit()
+
+
+def is_admin_username(username: str) -> bool:
+    return username.strip().lower() == "admin"

@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}EconomIA — Importar{% endblock %}
+{% block body %}
+<section class="hero">
+  <div>
+    <div class="pill">Importar fatura</div>
+    <h1>Importar gastos.</h1>
+    <p>Faça upload de um PDF de fatura de cartão ou CSV exportado do seu banco.</p>
+  </div>
+  <nav>
+    <a href="/" class="{{ 'nav-active' if request.url.path == '/' else '' }}">Chat</a>
+    <a href="/dashboard" class="{{ 'nav-active' if request.url.path == '/dashboard' else '' }}">Dashboard</a>
+    <a href="/import" class="{{ 'nav-active' if request.url.path.startswith('/import') else '' }}">Importar</a>
+    <a href="/settings/categories" class="{{ 'nav-active' if request.url.path.startswith('/settings') else '' }}">Categorias</a>
+    <form method="post" action="/logout"><button type="submit">Sair</button></form>
+  </nav>
+</section>
+
+<section class="card" style="max-width:560px; margin: 0 auto;">
+  {% if error %}
+    <div class="error-box">{{ error }}</div>
+  {% endif %}
+
+  <form method="post" action="/import/upload" enctype="multipart/form-data">
+    <label style="display:block; margin-bottom:16px;">
+      <span style="font-size:0.9rem; color:var(--muted);">Arquivo (PDF ou CSV)</span>
+      <input type="file" name="file" accept=".pdf,.csv,text/csv,application/pdf" required
+             style="display:block; margin-top:6px;">
+    </label>
+
+    <label style="display:block; margin-bottom:16px;">
+      <span style="font-size:0.9rem; color:var(--muted);">
+        Mês de referência <span style="font-weight:normal;">(opcional — ajuda a inferir o ano em datas sem ano)</span>
+      </span>
+      <input type="month" name="reference_month"
+             style="display:block; margin-top:6px; width:auto;">
+    </label>
+
+    <button type="submit">Analisar arquivo</button>
+  </form>
+
+  <div class="callout" style="margin-top:24px;">
+    <strong>Formatos suportados</strong>
+    <ul>
+      <li><strong>CSV:</strong> Nubank, Inter, C6 e outros — precisa ter colunas de data, descrição e valor.</li>
+      <li><strong>PDF:</strong> faturas digitais (não escaneadas) de cartão de crédito.</li>
+    </ul>
+  </div>
+</section>
+{% endblock %}

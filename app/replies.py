@@ -59,6 +59,16 @@ def reply_budget_set(budget: ParsedBudget) -> str:
     )
 
 
+def reply_budgets_set(budgets: list[ParsedBudget]) -> str:
+    lines = "\n".join(
+        f"- {format_category(b.category)}: {cents_to_brl(b.amount_cents)}" for b in budgets
+    )
+    return (
+        f"Perfeito! Configurei {len(budgets)} orçamentos de uma vez:\n\n{lines}\n\n"
+        "Quando quiser, comparo com seus gastos atuais para mostrar categorias em atenção."
+    )
+
+
 def reply_monthly_summary(summary: dict) -> str:
     expense_count = summary["expense_count"]
     if not expense_count:
@@ -221,6 +231,14 @@ def reply_recurring_created(rec: dict) -> str:
     return (
         f"Recorrente criado! {_format_recurring(rec)}\n\n"
         "Vou registrar automaticamente esse gasto nos próximos ciclos."
+    )
+
+
+def reply_recurring_created_many(recurrings: list[dict]) -> str:
+    lines = "\n".join(f"- {_format_recurring(r)}" for r in recurrings)
+    return (
+        f"Recorrentes criados! Registrei {len(recurrings)} itens:\n\n{lines}\n\n"
+        "Vou lançar automaticamente cada um deles nos próximos ciclos."
     )
 
 

@@ -1,4 +1,4 @@
-﻿{% extends "base.html" %}
+{% extends "base.html" %}
 {% block title %}EconomIA — Dashboard{% endblock %}
 {% block body %}
 <section class="hero">
@@ -8,12 +8,20 @@
     <p>Resumo de gastos, distribuição por categoria e comparação com o orçamento.</p>
   </div>
   <nav>
-    <a href="/">Chat</a>
-    <a href="/dashboard">Dashboard</a>
-    <a href="/settings/categories">Categorias</a>
+    <a href="/" class="{{ 'nav-active' if request.url.path == '/' else '' }}">Chat</a>
+    <a href="/dashboard" class="{{ 'nav-active' if request.url.path == '/dashboard' else '' }}">Dashboard</a>
+    <a href="/import" class="{{ 'nav-active' if request.url.path.startswith('/import') else '' }}">Importar</a>
+    <a href="/settings/categories" class="{{ 'nav-active' if request.url.path.startswith('/settings') else '' }}">Categorias</a>
+    {% if user.is_admin %}<a href="/settings/tokens" class="{{ 'nav-active' if request.url.path.startswith('/settings/tokens') else '' }}">Tokens</a>{% endif %}
     <form method="post" action="/logout"><button type="submit">Sair</button></form>
   </nav>
 </section>
+<div id="dashboard-feedback"></div>
+{% if import_success %}
+  <div class="callout" style="margin-bottom:16px; border-color:var(--accent); background:var(--accent-soft);">
+    <strong style="color:var(--accent);">{{ import_success }}</strong>
+  </div>
+{% endif %}
 <section class="card">
   <div class="kpi">
     <div class="metric"><span class="muted">Total do mês</span><strong>{{ summary.total_brl }}</strong></div>
@@ -36,7 +44,7 @@
     <div class="callout">
       <strong>Orçamento em atenção</strong>
       <ul>
-        {% for alert in summary.budget_alerts[:2] %}
+        {% for alert in summary.budget_alerts %}
           <li class="{{ 'danger' if alert.level == 'over_budget' else 'warning' }}">{{ alert.message }}</li>
         {% endfor %}
       </ul>
@@ -46,40 +54,32 @@
   <h3>Esta semana</h3>
   <table>
     <tbody>
-      <tr>
-        <th>Total</th>
-        <td>{{ weekly.total_brl }}</td>
-      </tr>
-      <tr>
-        <th>Gastos</th>
-        <td>{{ weekly.expense_count }}</td>
-      </tr>
-      <tr>
-        <th>Categoria principal</th>
-        <td>{% if weekly.top_category %}{{ weekly.top_category.category_label }}{% else %}—{% endif %}</td>
-      </tr>
-      <tr>
-        <th>Comparação</th>
-        <td>{{ weekly.comparison.text }}</td>
-      </tr>
+      <tr><th>Total</th><td>{{ weekly.total_brl }}</td></tr>
+      <tr><th>Gastos</th><td>{{ weekly.expense_count }}</td></tr>
+      <tr><th>Categoria principal</th><td>{% if weekly.top_category %}{{ weekly.top_category.category_label }}{% else %}—{% endif %}</td></tr>
+      <tr><th>Comparação</th><td>{{ weekly.comparison.text }}</td></tr>
     </tbody>
   </table>
 
   <h3>Últimos gastos</h3>
   <table>
-    <thead><tr><th>Data</th><th>Descrição</th><th>Categoria</th><th>Valor</th></tr></thead>
+    <thead><tr><th>Data</th><th>Descrição</th><th>Categoria</th><th>Valor</th><th></th></tr></thead>
     <tbody>
       {% if summary.recent_expenses %}
         {% for item in summary.recent_expenses %}
-          <tr>
+          <tr id="expense-row-{{ item.id }}">
             <td>{{ item.expense_date }}</td>
             <td>{{ item.description }}</td>
             <td>{{ item.category_label }}</td>
             <td>{{ cents_to_brl(item.amount_cents) }}</td>
+            <td style="white-space:nowrap">
+              <button class="btn-sm" onclick="openEdit({{ item.id }}, {{ item.description | tojson }}, {{ item.category | tojson }}, {{ item.amount_cents }}, {{ item.expense_date | tojson }})">Editar</button>
+              <button class="btn-sm btn-danger" onclick="deleteExpense({{ item.id }}, this)">Excluir</button>
+            </td>
           </tr>
         {% endfor %}
       {% else %}
-        <tr><td colspan="4" class="muted">Sem gastos neste mês.</td></tr>
+        <tr><td colspan="5" class="muted">Sem gastos neste mês.</td></tr>
       {% endif %}
     </tbody>
   </table>
@@ -102,5 +102,137 @@
       {% endif %}
     </tbody>
   </table>
+
+  <h3>Distribuição por categoria</h3>
+  {% if summary.categories %}
+    <div style="display:grid;grid-template-columns:280px 1fr;gap:16px;align-items:center;">
+      <canvas id="category-pie-chart" width="280" height="280" aria-label="Gráfico de gastos por categoria"></canvas>
+      <div id="category-pie-legend"></div>
+    </div>
+  {% else %}
+    <p class="muted">Sem dados de categoria para exibir no gráfico.</p>
+  {% endif %}
 </section>
+
+<dialog id="edit-modal">
+  <form method="post" id="edit-form">
+    <h3>Editar gasto</h3>
+    <label>Descrição
+      <input type="text" name="description" required maxlength="120">
+    </label>
+    <label>Categoria
+      <select name="category">
+        {% for cat in user_categories %}
+          <option value="{{ cat.key }}">{{ cat.label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Valor (R$)
+      <input type="number" step="0.01" min="0.01" name="amount_brl" required>
+    </label>
+    <label>Data
+      <input type="date" name="expense_date" required>
+    </label>
+    <div class="modal-actions">
+      <button type="submit">Salvar</button>
+      <button type="button" onclick="document.getElementById('edit-modal').close()">Cancelar</button>
+    </div>
+  </form>
+</dialog>
+
+<script>
+  function showFeedback(message, isError) {
+    const host = document.getElementById("dashboard-feedback");
+    host.innerHTML = "";
+    const box = document.createElement("div");
+    box.className = "callout";
+    box.style.marginBottom = "16px";
+    box.style.borderColor = isError ? "var(--danger)" : "var(--accent)";
+    box.style.background = isError ? "rgba(239, 68, 68, 0.12)" : "var(--accent-soft)";
+    box.innerHTML = "<strong style='color:" + (isError ? "var(--danger)" : "var(--accent)") + "'>" + message + "</strong>";
+    host.appendChild(box);
+  }
+
+  function openEdit(id, description, category, amountCents, expenseDate) {
+    const form = document.getElementById("edit-form");
+    form.dataset.expenseId = id;
+    form.querySelector("[name=description]").value = description;
+    const select = form.querySelector("[name=category]");
+    for (const opt of select.options) {
+      opt.selected = opt.value === category;
+    }
+    form.querySelector("[name=amount_brl]").value = (amountCents / 100).toFixed(2);
+    form.querySelector("[name=expense_date]").value = expenseDate;
+    document.getElementById("edit-modal").showModal();
+  }
+
+  document.getElementById("edit-form").addEventListener("submit", async function(event) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const expenseId = form.dataset.expenseId;
+    const formData = new FormData(form);
+
+    try {
+      const res = await fetch("/api/expenses/" + expenseId + "/edit", {
+        method: "POST",
+        body: formData
+      });
+      const data = await res.json();
+      if (!data.ok) {
+        showFeedback(data.error || "Erro ao editar gasto.", true);
+        return;
+      }
+      window.location.reload();
+    } catch {
+      showFeedback("Erro ao editar gasto. Tente novamente.", true);
+    }
+  });
+
+  async function deleteExpense(id, btn) {
+    if (!confirm("Excluir este gasto?")) return;
+    const row = document.getElementById("expense-row-" + id);
+    try {
+      const res = await fetch("/api/expenses/" + id + "/delete", { method: "POST" });
+      const data = await res.json();
+      if (data.ok) {
+        row.remove();
+      } else {
+        showFeedback(data.error || "Erro ao excluir.", true);
+      }
+    } catch {
+      showFeedback("Erro ao excluir. Tente novamente.", true);
+    }
+  }
+
+  function renderCategoryPie() {
+    const canvas = document.getElementById("category-pie-chart");
+    if (!canvas || typeof Chart === "undefined") return;
+    const categories = {{ summary.categories | tojson }};
+    const labels = categories.map(c => c.category_label);
+    const values = categories.map(c => c.amount_cents / 100);
+    const colors = ["#147d64", "#1e90ff", "#f39c12", "#e74c3c", "#9b59b6", "#16a085", "#8d6e63", "#607d8b"];
+
+    new Chart(canvas, {
+      type: "pie",
+      data: {
+        labels,
+        datasets: [{ data: values, backgroundColor: labels.map((_, i) => colors[i % colors.length]) }]
+      },
+      options: {
+        responsive: false,
+        plugins: { legend: { display: false } }
+      }
+    });
+
+    const legend = document.getElementById("category-pie-legend");
+    legend.innerHTML = categories.map((c, i) =>
+      `<div style="display:flex;align-items:center;gap:8px;margin:6px 0;">
+        <span style="display:inline-block;width:12px;height:12px;border-radius:50%;background:${colors[i % colors.length]};"></span>
+        <span>${c.category_label}: <strong>${c.amount_brl}</strong></span>
+      </div>`
+    ).join("");
+  }
+</script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>renderCategoryPie();</script>
 {% endblock %}
