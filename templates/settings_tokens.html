@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}EconomIA — Tokens OpenAI{% endblock %}
+{% block body %}
+<div class="settings-wrap">
+  <nav style="margin-bottom:24px;">
+    <a href="/settings/categories" style="color:var(--muted);font-size:0.9rem;">← Voltar às categorias</a>
+  </nav>
+
+  <div class="pill">Admin</div>
+  <h1>Governança de tokens OpenAI</h1>
+  <p class="muted">Defina limites e acompanhe o consumo mensal e chamadas recentes.</p>
+
+  <section class="card" style="margin-top:16px;">
+    <div class="kpi">
+      <div class="metric"><span class="muted">Tokens no mês</span><strong>{{ summary.total_tokens }}</strong></div>
+      <div class="metric"><span class="muted">Custo estimado</span><strong>{{ cents_to_brl(summary.total_cost_cents) }}</strong></div>
+      <div class="metric"><span class="muted">Chamadas</span><strong>{{ summary.total_calls }}</strong></div>
+    </div>
+  </section>
+
+  <form method="post" action="/settings/tokens" class="card" style="margin-top:16px;">
+    <h3>Política de limites</h3>
+    <label>Limite mensal de tokens
+      <input type="number" name="monthly_token_limit" min="1000" value="{{ token_settings.monthly_token_limit }}" required />
+    </label>
+    <label>Janela de taxa (minutos)
+      <input type="number" name="rate_window_minutes" min="1" value="{{ token_settings.rate_window_minutes }}" required />
+    </label>
+    <label>Limite por janela (tokens)
+      <input type="number" name="rate_token_limit" min="100" value="{{ token_settings.rate_token_limit }}" required />
+    </label>
+    <label style="display:flex;gap:8px;align-items:center;">
+      <input type="checkbox" name="enabled" {% if token_settings.enabled %}checked{% endif %}>
+      Política ativa
+    </label>
+    <button type="submit">Salvar política</button>
+  </form>
+
+  <section class="card" style="margin-top:16px;">
+    <h3>Chamadas recentes</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>Data</th><th>Rota</th><th>Tarefa</th><th>Modelo</th><th>Tokens</th><th>Custo</th><th>Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% if logs %}
+          {% for log in logs %}
+            <tr>
+              <td>{{ log.created_at }}</td>
+              <td>{{ log.route }}</td>
+              <td>{{ log.task_type }}</td>
+              <td>{{ log.model }}</td>
+              <td>{{ log.total_tokens }}</td>
+              <td>{{ cents_to_brl(log.estimated_cost_cents) }}</td>
+              <td>{{ log.status }}</td>
+            </tr>
+          {% endfor %}
+        {% else %}
+          <tr><td colspan="7" class="muted">Sem logs de uso ainda.</td></tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </section>
+</div>
+{% endblock %}

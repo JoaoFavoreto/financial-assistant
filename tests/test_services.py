@@ -84,6 +84,29 @@ class ServicesTests(unittest.TestCase):
         self.assertEqual(summary["expense_count"], 2)
         self.assertEqual(summary["total_cents"], 4800)
 
+    def test_create_expenses_is_atomic_when_one_insert_fails(self) -> None:
+        expenses = [
+            ParsedExpense(
+                description="cantina",
+                category="alimentacao",
+                amount_cents=3000,
+                expense_date=date.today(),
+            ),
+            ParsedExpense(
+                description="invalido",
+                category="outros",
+                amount_cents=None,  # type: ignore[arg-type]
+                expense_date=date.today(),
+            ),
+        ]
+        with self.assertRaises(Exception):
+            self.expense_service.create_expenses(expenses, user_id=self.user_id)
+
+        summary = self.expense_service.get_monthly_summary(
+            date.today().year, date.today().month, user_id=self.user_id
+        )
+        self.assertEqual(summary["expense_count"], 0)
+
     def test_data_isolation_between_users(self) -> None:
         user2_id = create_user("otheruser", "senha456")
         self.expense_service.create_expense(

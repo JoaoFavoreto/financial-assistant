@@ -1,12 +1,19 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import sqlite3
+from contextlib import contextmanager
 from pathlib import Path
+from typing import Iterator
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = BASE_DIR / "data"
 DB_PATH = DATA_DIR / "economia.db"
+_INITIALIZED_DB_PATH: Path | None = None
+
+
+def _current_db_path() -> Path:
+    return DB_PATH.resolve()
 
 
 def _get_schema_version(connection: sqlite3.Connection) -> int:
@@ -17,10 +24,16 @@ def _get_schema_version(connection: sqlite3.Connection) -> int:
         return 0
 
 
-def ensure_database() -> None:
+def ensure_database(force: bool = False) -> None:
+    global _INITIALIZED_DB_PATH
+
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(DB_PATH) as connection:
-        # Core tables (idempotent)
+    current_db_path = _current_db_path()
+    if not force and _INITIALIZED_DB_PATH == current_db_path and current_db_path.exists():
+        return
+
+    connection = sqlite3.connect(DB_PATH)
+    try:
         connection.execute(
             """
             CREATE TABLE IF NOT EXISTS schema_version (
@@ -81,18 +94,14 @@ def ensure_database() -> None:
         version = _get_schema_version(connection)
 
         if version < 1:
-            # Add user_id to expenses
             try:
                 connection.execute("ALTER TABLE expenses ADD COLUMN user_id INTEGER")
             except sqlite3.OperationalError:
                 pass
-            # Add user_id to budgets
             try:
                 connection.execute("ALTER TABLE budgets ADD COLUMN user_id INTEGER")
             except sqlite3.OperationalError:
                 pass
-            # Recreate budgets with UNIQUE(user_id, category) instead of UNIQUE(category)
-            # Only needed if the old unique constraint exists (no user_id yet)
             try:
                 connection.execute(
                     """
@@ -114,13 +123,13 @@ def ensure_database() -> None:
                 connection.execute("ALTER TABLE budgets_new RENAME TO budgets")
             except sqlite3.OperationalError:
                 pass
-            # Set schema version
             existing = connection.execute("SELECT COUNT(*) FROM schema_version").fetchone()[0]
             if existing == 0:
                 connection.execute("INSERT INTO schema_version (version) VALUES (1)")
             else:
                 connection.execute("UPDATE schema_version SET version = 1")
             connection.commit()
+            version = 1
 
         if version < 2:
             connection.execute(
@@ -137,12 +146,105 @@ def ensure_database() -> None:
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_chat_messages_user_id ON chat_messages(user_id, id DESC)"
             )
-            connection.execute("UPDATE schema_version SET version = 2")
+            existing = connection.execute("SELECT COUNT(*) FROM schema_version").fetchone()[0]
+            if existing == 0:
+                connection.execute("INSERT INTO schema_version (version) VALUES (2)")
+            else:
+                connection.execute("UPDATE schema_version SET version = 2")
+            connection.commit()
+            version = 2
+
+        if version < 3:
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS recurring_expenses (
+                    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id          INTEGER NOT NULL REFERENCES users(id),
+                    description      TEXT NOT NULL,
+                    category         TEXT NOT NULL,
+                    amount_cents     INTEGER NOT NULL,
+                    frequency        TEXT NOT NULL,
+                    day_of_month     INTEGER,
+                    day_of_week      INTEGER,
+                    active           INTEGER NOT NULL DEFAULT 1,
+                    last_generated   TEXT,
+                    created_at       TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+            existing = connection.execute("SELECT COUNT(*) FROM schema_version").fetchone()[0]
+            if existing == 0:
+                connection.execute("INSERT INTO schema_version (version) VALUES (3)")
+            else:
+                connection.execute("UPDATE schema_version SET version = 3")
+            connection.commit()
+            version = 3
+
+        if version < 4:
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS import_sessions (
+                    id         TEXT PRIMARY KEY,
+                    user_id    INTEGER NOT NULL REFERENCES users(id),
+                    payload    TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+            connection.execute("UPDATE schema_version SET version = 4")
+            connection.commit()
+            version = 4
+
+        if version < 5:
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS llm_usage_logs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER REFERENCES users(id),
+                    route TEXT NOT NULL,
+                    task_type TEXT NOT NULL,
+                    model TEXT NOT NULL,
+                    prompt_tokens INTEGER NOT NULL DEFAULT 0,
+                    completion_tokens INTEGER NOT NULL DEFAULT 0,
+                    total_tokens INTEGER NOT NULL DEFAULT 0,
+                    estimated_cost_cents INTEGER NOT NULL DEFAULT 0,
+                    status TEXT NOT NULL,
+                    error_message TEXT,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS llm_settings (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    monthly_token_limit INTEGER NOT NULL DEFAULT 200000,
+                    rate_window_minutes INTEGER NOT NULL DEFAULT 10,
+                    rate_token_limit INTEGER NOT NULL DEFAULT 20000,
+                    enabled INTEGER NOT NULL DEFAULT 1
+                )
+                """
+            )
+            existing = connection.execute("SELECT COUNT(*) FROM schema_version").fetchone()[0]
+            if existing == 0:
+                connection.execute("INSERT INTO schema_version (version) VALUES (5)")
+            else:
+                connection.execute("UPDATE schema_version SET version = 5")
             connection.commit()
 
+        _INITIALIZED_DB_PATH = current_db_path
+    finally:
+        connection.close()
 
-def get_connection() -> sqlite3.Connection:
+
+@contextmanager
+def get_connection() -> Iterator[sqlite3.Connection]:
     ensure_database()
     connection = sqlite3.connect(DB_PATH)
     connection.row_factory = sqlite3.Row
-    return connection
+    connection.execute("PRAGMA foreign_keys = ON")
+    connection.execute("PRAGMA busy_timeout = 5000")
+    try:
+        yield connection
+    finally:
+        connection.close()

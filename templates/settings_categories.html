@@ -52,6 +52,9 @@
 <div class="settings-wrap">
   <nav style="margin-bottom:24px;">
     <a href="/" style="color:var(--muted);font-size:0.9rem;">← Voltar ao chat</a>
+    {% if user.is_admin %}
+      <a href="/settings/tokens" style="color:var(--muted);font-size:0.9rem;margin-left:14px;">Tokens OpenAI</a>
+    {% endif %}
   </nav>
 
   <div class="pill">Configurações</div>

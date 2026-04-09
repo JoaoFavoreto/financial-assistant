@@ -11,6 +11,18 @@
     <input type="text" name="username" placeholder="Usuário" required autofocus />
     <input type="password" name="password" placeholder="Senha (mín. 6 caracteres)" required />
     <input type="password" name="confirm_password" placeholder="Confirmar senha" required />
+    <div class="callout">
+      <strong>Categorias iniciais</strong>
+      <p class="muted" style="margin:6px 0 10px;">Desmarque ou renomeie as categorias que quiser já no cadastro.</p>
+      {% for cat in categories %}
+        <div class="onboarding-cat">
+          <input type="checkbox" name="enabled_{{ cat.key }}" checked />
+          <input type="text" name="label_{{ cat.key }}" value="{{ cat.label }}" />
+        </div>
+      {% endfor %}
+      <label style="display:block;margin-top:10px;">Categorias extras (uma por linha)</label>
+      <textarea name="custom_categories" rows="3" placeholder="Ex.: Pets&#10;Viagens"></textarea>
+    </div>
     <button type="submit">Criar conta</button>
   </form>
   <p style="margin-top:16px;">Já tem conta? <a href="/login">Entrar</a></p>

@@ -1,0 +1,146 @@
+{% extends "base.html" %}
+{% block title %}EconomIA — Revisar importação{% endblock %}
+{% block body %}
+<section class="hero">
+  <div>
+    <div class="pill">Revisar importação</div>
+    <h1>Confirmar gastos.</h1>
+    <p>Revise os itens extraídos de <strong>{{ filename }}</strong> antes de importar.</p>
+  </div>
+  <nav>
+    <a href="/">Chat</a>
+    <a href="/dashboard">Dashboard</a>
+    <a href="/import" class="nav-active">Importar</a>
+    <a href="/settings/categories">Categorias</a>
+    <form method="post" action="/logout"><button type="submit">Sair</button></form>
+  </nav>
+</section>
+
+<section class="card">
+  <form method="post" action="/import/confirm" id="confirm-form">
+    <input type="hidden" name="session_id" value="{{ session_id }}">
+
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+      <div>
+        <span id="selected-count">{{ expenses | length }}</span> de {{ expenses | length }} selecionado(s)
+        &nbsp;·&nbsp; Total: <strong id="selected-total">—</strong>
+      </div>
+      <div style="display:flex; gap:8px;">
+        <button type="button" class="btn-sm" onclick="toggleAll(true)">Selecionar todos</button>
+        <button type="button" class="btn-sm" onclick="toggleAll(false)">Desmarcar todos</button>
+      </div>
+    </div>
+
+    <div style="overflow-x:auto;">
+      <table>
+        <thead>
+          <tr>
+            <th style="width:36px;"></th>
+            <th>Data</th>
+            <th>Descrição</th>
+            <th>Categoria</th>
+            <th>Valor (R$)</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for item in expenses %}
+          {% set is_dup = duplicates[loop.index0] if loop.index0 < duplicates | length else false %}
+          <tr class="{{ 'dup-row' if is_dup else '' }}">
+            <td>
+              <input type="checkbox" name="include_{{ loop.index0 }}"
+                     data-cents="{{ item.amount_cents }}"
+                     class="row-check"
+                     {% if not is_dup %}checked{% endif %}>
+            </td>
+            <td>
+              <input type="date" name="expense_date_{{ loop.index0 }}"
+                     value="{{ item.expense_date }}"
+                     style="width:130px; font-size:0.85rem;">
+            </td>
+            <td>
+              <input type="text" name="description_{{ loop.index0 }}"
+                     value="{{ item.description }}"
+                     maxlength="120"
+                     style="width:100%; min-width:180px; font-size:0.85rem;">
+              {% if is_dup %}
+                <span class="warning" style="font-size:0.78rem;">⚠ possível duplicata</span>
+              {% endif %}
+            </td>
+            <td>
+              <select name="category_{{ loop.index0 }}" style="font-size:0.85rem;">
+                {% for cat in user_categories %}
+                  <option value="{{ cat.key }}" {{ 'selected' if cat.key == item.category else '' }}>
+                    {{ cat.label }}
+                  </option>
+                {% endfor %}
+                {% if not user_categories or not (user_categories | selectattr('key', 'equalto', item.category) | list) %}
+                  <option value="{{ item.category }}" selected>{{ item.category }}</option>
+                {% endif %}
+              </select>
+            </td>
+            <td>
+              <input type="number" name="amount_brl_{{ loop.index0 }}"
+                     value="{{ '%.2f' | format(item.amount_cents / 100) }}"
+                     step="0.01" min="0.01"
+                     style="width:90px; font-size:0.85rem;"
+                     class="amount-input">
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <div style="display:flex; gap:12px; margin-top:20px; align-items:center; flex-wrap:wrap;">
+      <button type="submit">Importar selecionados</button>
+      <a href="/import" style="color:var(--muted); font-size:0.9rem;">Cancelar</a>
+    </div>
+  </form>
+</section>
+
+<style>
+  .dup-row { background: #fffbe6; }
+  table input[type="text"], table input[type="date"], table input[type="number"], table select {
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 6px 8px;
+    background: white;
+    font: inherit;
+  }
+</style>
+
+<script>
+  const checkboxes = document.querySelectorAll(".row-check");
+
+  function updateSummary() {
+    let count = 0;
+    let totalCents = 0;
+    checkboxes.forEach(cb => {
+      if (cb.checked) {
+        count++;
+        // Read from the sibling amount input
+        const row = cb.closest("tr");
+        const amtInput = row.querySelector(".amount-input");
+        if (amtInput) {
+          const val = parseFloat(amtInput.value.replace(",", ".")) || 0;
+          totalCents += Math.round(val * 100);
+        }
+      }
+    });
+    document.getElementById("selected-count").textContent = count;
+    const brl = (totalCents / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+    document.getElementById("selected-total").textContent = brl;
+  }
+
+  checkboxes.forEach(cb => cb.addEventListener("change", updateSummary));
+  document.querySelectorAll(".amount-input").forEach(inp => inp.addEventListener("input", updateSummary));
+
+  function toggleAll(state) {
+    checkboxes.forEach(cb => { cb.checked = state; });
+    updateSummary();
+  }
+
+  // Initial count
+  updateSummary();
+</script>
+{% endblock %}

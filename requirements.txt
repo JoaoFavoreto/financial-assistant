@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+jinja2
+itsdangerous
+python-dotenv
+openai
+pydantic
+python-multipart
+pdfplumber

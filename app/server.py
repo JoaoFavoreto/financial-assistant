@@ -7,6 +7,7 @@ from app.config import settings
 from app.db import ensure_database
 from app.router_auth import router as router_auth
 from app.router_chat import router as router_chat
+from app.router_import import router as router_import
 from app.router_pages import router as router_pages
 from app.router_settings import router as router_settings
 
@@ -19,6 +20,7 @@ def create_app() -> FastAPI:
     application.include_router(router_pages)
     application.include_router(router_chat)
     application.include_router(router_settings)
+    application.include_router(router_import)
     return application
 
 
